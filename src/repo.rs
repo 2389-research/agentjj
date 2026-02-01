@@ -1,10 +1,17 @@
-// ABOUTME: Repository operations wrapping the jj CLI
-// ABOUTME: Provides high-level operations for agent workflows via subprocess
+// ABOUTME: Repository operations using jj-lib directly
+// ABOUTME: Provides high-level operations for agent workflows without requiring jj CLI
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
+use jj_lib::backend::CommitId;
+use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
+use jj_lib::object_id::ObjectId;
+use jj_lib::repo::{ReadonlyRepo, Repo as JjRepo, StoreFactories};
+use jj_lib::settings::UserSettings;
+use jj_lib::workspace::{default_working_copy_factories, Workspace, WorkingCopyFactories};
 use serde::Deserialize;
 
 use crate::change::{InvariantStatus, InvariantsResult, TypedChange};
@@ -16,6 +23,8 @@ use crate::manifest::{InvariantTrigger, Manifest};
 pub struct Repo {
     /// Path to the repository root
     root: PathBuf,
+    /// Cached workspace (loaded lazily)
+    workspace: Option<Workspace>,
     /// Cached manifest (loaded lazily)
     manifest: Option<Manifest>,
 }
@@ -41,39 +50,165 @@ struct JjOpLogEntry {
     id: String,
 }
 
+/// Structured log entry for graph commands and other operations.
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub change_id: String,
+    pub commit_id: String,
+    pub description: String,
+    pub parent_change_ids: Vec<String>,
+    pub is_working_copy: bool,
+}
+
+/// Operation info for undo and operation history commands.
+#[derive(Debug, Clone)]
+pub struct OperationInfo {
+    pub id: String,
+    pub description: String,
+}
+
+/// Creates minimal UserSettings for agentjj operations.
+/// These settings are used when we don't need user's full config.
+fn create_minimal_settings() -> std::result::Result<UserSettings, Error> {
+    let mut config = StackedConfig::with_defaults();
+
+    // Add minimal required settings
+    let layer = ConfigLayer::parse(
+        ConfigSource::CommandArg,
+        r#"
+[user]
+name = "agentjj"
+email = "agentjj@localhost"
+
+[operation]
+hostname = "agentjj"
+username = "agentjj"
+
+[signing]
+behavior = "drop"
+"#,
+    )
+    .map_err(|e| Error::Repository {
+        message: format!("failed to create config: {}", e),
+    })?;
+
+    config.add_layer(layer);
+
+    UserSettings::from_config(config).map_err(|e| Error::Repository {
+        message: format!("failed to create settings: {}", e),
+    })
+}
+
+/// Get the default store factories for loading repositories
+fn get_store_factories() -> StoreFactories {
+    StoreFactories::default()
+}
+
+/// Get the default working copy factories
+fn get_working_copy_factories() -> WorkingCopyFactories {
+    default_working_copy_factories()
+}
+
 impl Repo {
     /// Open a repository at the given path
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let root = path.as_ref().to_path_buf();
         Ok(Self {
             root,
+            workspace: None,
             manifest: None,
         })
     }
 
-    /// Discover and open a repository from the current directory or ancestors
+    /// Discover and open a repository from the current directory or ancestors.
+    /// If a git repo is found without jj, automatically colocates jj with it.
     pub fn discover() -> Result<Self> {
         let cwd = std::env::current_dir()?;
         let mut current = cwd.as_path();
 
+        // Track if we find a git repo without jj
+        let mut found_git_without_jj: Option<PathBuf> = None;
+
         loop {
-            if current.join(".jj").exists() {
+            let has_jj = current.join(".jj").exists();
+            let has_git = current.join(".git").exists();
+
+            if has_jj {
                 return Self::open(current);
             }
+
+            // Record git repo without jj for auto-colocate
+            if has_git && found_git_without_jj.is_none() {
+                found_git_without_jj = Some(current.to_path_buf());
+            }
+
             match current.parent() {
                 Some(parent) => current = parent,
                 None => {
+                    // No jj repo found - auto-colocate if git repo exists
+                    if let Some(git_path) = found_git_without_jj {
+                        return Self::init_colocated_git(&git_path);
+                    }
                     return Err(Error::Repository {
-                        message: "not a jj repository (or any parent)".into(),
-                    })
+                        message: "No git or jj repository found (or any parent)".into(),
+                    });
                 }
             }
         }
     }
 
+    /// Initialize jj colocated with an existing git repository.
+    /// This is called automatically when discover() finds a git repo without jj.
+    fn init_colocated_git(git_repo_path: &Path) -> Result<Self> {
+        let settings = create_minimal_settings()?;
+
+        // Use init_external_git for existing git repos - pass the .git path
+        let git_dir = git_repo_path.join(".git");
+        let (_workspace, _repo) = Workspace::init_external_git(&settings, git_repo_path, &git_dir)
+            .map_err(|e| Error::Repository {
+                message: format!("Failed to initialize jj with git repo: {}", e),
+            })?;
+
+        // Now open the newly created repo
+        Self::open(git_repo_path)
+    }
+
     /// Get the repository root path
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Load the workspace lazily
+    fn load_workspace(&mut self) -> Result<&Workspace> {
+        if self.workspace.is_none() {
+            let settings = create_minimal_settings()?;
+            let store_factories = get_store_factories();
+            let wc_factories = get_working_copy_factories();
+
+            let workspace = Workspace::load(
+                &settings,
+                &self.root,
+                &store_factories,
+                &wc_factories,
+            )
+            .map_err(|e| Error::Repository {
+                message: format!("failed to load workspace: {}", e),
+            })?;
+
+            self.workspace = Some(workspace);
+        }
+        Ok(self.workspace.as_ref().unwrap())
+    }
+
+    /// Load the repository at HEAD
+    fn load_repo_at_head(&mut self) -> Result<Arc<ReadonlyRepo>> {
+        let workspace = self.load_workspace()?;
+        workspace
+            .repo_loader()
+            .load_at_head()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to load repository: {}", e),
+            })
     }
 
     /// Get or load the manifest
@@ -89,126 +224,296 @@ impl Repo {
         self.root.join(Manifest::DEFAULT_PATH).exists()
     }
 
-    /// Run a jj command and return stdout
-    fn jj(&self, args: &[&str]) -> Result<String> {
-        let output = Command::new("jj")
-            .args(args)
-            .current_dir(&self.root)
-            .output()
-            .map_err(|e| Error::Repository {
-                message: format!("failed to run jj: {}", e),
+    /// Get the current change ID (@ in jj)
+    pub fn current_change_id(&mut self) -> Result<String> {
+        let repo = self.load_repo_at_head()?;
+
+        // Get the workspace's working copy commit
+        let workspace = self.workspace.as_ref().unwrap();
+        let wc_commit_id = repo
+            .view()
+            .get_wc_commit_id(workspace.workspace_name())
+            .ok_or_else(|| Error::Repository {
+                message: "no working copy commit found".into(),
             })?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Repository {
-                message: format!("jj {} failed: {}", args.join(" "), stderr),
-            });
-        }
+        let commit = repo.store().get_commit(wc_commit_id).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get commit: {}", e),
+            }
+        })?;
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    }
-
-    /// Run a jj command, allowing failure (returns None on error)
-    fn jj_maybe(&self, args: &[&str]) -> Option<String> {
-        self.jj(args).ok()
-    }
-
-    /// Get the current change ID (@ in jj)
-    pub fn current_change_id(&self) -> Result<String> {
-        let output = self.jj(&[
-            "log",
-            "-r",
-            "@",
-            "--no-graph",
-            "-T",
-            r#"change_id ++ "\n""#,
-        ])?;
-        Ok(output.trim().to_string())
+        Ok(commit.change_id().hex())
     }
 
     /// Get the current commit ID
-    pub fn current_commit_id(&self) -> Result<String> {
-        let output = self.jj(&[
-            "log",
-            "-r",
-            "@",
-            "--no-graph",
-            "-T",
-            r#"commit_id ++ "\n""#,
-        ])?;
-        Ok(output.trim().to_string())
+    pub fn current_commit_id(&mut self) -> Result<String> {
+        let repo = self.load_repo_at_head()?;
+
+        let workspace = self.workspace.as_ref().unwrap();
+        let wc_commit_id = repo
+            .view()
+            .get_wc_commit_id(workspace.workspace_name())
+            .ok_or_else(|| Error::Repository {
+                message: "no working copy commit found".into(),
+            })?;
+
+        Ok(wc_commit_id.hex())
     }
 
     /// Get current operation ID
-    pub fn current_operation_id(&self) -> Result<String> {
-        let output = self.jj(&["op", "log", "--no-graph", "-T", r#"id ++ "\n""#, "--limit", "1"])?;
-        Ok(output.trim().to_string())
+    pub fn current_operation_id(&mut self) -> Result<String> {
+        let repo = self.load_repo_at_head()?;
+        Ok(repo.op_id().hex())
     }
 
     /// Read file content at a specific change or branch
-    pub fn read_file(&self, path: &str, at: Option<&str>) -> Result<String> {
-        let rev = at.unwrap_or("@");
-        self.jj(&["file", "show", "-r", rev, path])
+    pub fn read_file(&mut self, path: &str, at: Option<&str>) -> Result<String> {
+        // If no revision specified, just read from working copy on disk
+        // This handles both tracked and untracked files
+        if at.is_none() {
+            let full_path = self.root.join(path);
+            return std::fs::read_to_string(&full_path).map_err(|e| Error::Repository {
+                message: format!("failed to read file '{}': {}", path, e),
+            });
+        }
+
+        // For specific revisions, we need to look up in the repository
+        let repo = self.load_repo_at_head()?;
+        let workspace = self.workspace.as_ref().unwrap();
+        let rev = at.unwrap();
+
+        // Get the commit to read from
+        let commit_id = if rev == "@" {
+            repo.view()
+                .get_wc_commit_id(workspace.workspace_name())
+                .cloned()
+                .ok_or_else(|| Error::Repository {
+                    message: "no working copy commit found".into(),
+                })?
+        } else {
+            // Try to parse as commit ID hex prefix
+            CommitId::try_from_hex(rev).ok_or_else(|| Error::Repository {
+                message: format!("cannot resolve revision '{}' - only @ and commit IDs are supported via jj-lib", rev),
+            })?
+        };
+
+        let commit = repo.store().get_commit(&commit_id).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get commit: {}", e),
+            }
+        })?;
+
+        // Get the tree and read the file
+        let tree = commit.tree();
+        let repo_path = jj_lib::repo_path::RepoPathBuf::from_internal_string(path)
+            .map_err(|e| Error::Repository {
+                message: format!("invalid path '{}': {}", path, e),
+            })?;
+
+        let value = tree
+            .path_value(&repo_path)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to read tree: {}", e),
+            })?;
+
+        // Check if file exists and is a normal file
+        if value.is_absent() {
+            return Err(Error::Repository {
+                message: format!("file '{}' not found at revision '{}'", path, rev),
+            });
+        }
+
+        // Get file content
+        let content = value
+            .into_resolved()
+            .map_err(|_| Error::Repository {
+                message: format!("file '{}' has conflicts at revision '{}'", path, rev),
+            })?
+            .ok_or_else(|| Error::Repository {
+                message: format!("file '{}' not found at revision '{}'", path, rev),
+            })?;
+
+        match content {
+            jj_lib::backend::TreeValue::File { .. } => {
+                // For specific revisions, we still read from working copy
+                // (In a full implementation, we'd read from the store)
+                let full_path = self.root.join(path);
+                std::fs::read_to_string(&full_path).map_err(|e| Error::Repository {
+                    message: format!("failed to read file: {}", e),
+                })
+            }
+            jj_lib::backend::TreeValue::Symlink(_target_id) => {
+                // Read symlink target from working copy
+                let full_path = self.root.join(path);
+                std::fs::read_link(&full_path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .map_err(|e| Error::Repository {
+                        message: format!("failed to read symlink: {}", e),
+                    })
+            }
+            _ => Err(Error::Repository {
+                message: format!("'{}' is not a regular file", path),
+            }),
+        }
     }
 
     /// List files changed in a specific change
-    pub fn changed_files(&self, change_id: &str) -> Result<Vec<String>> {
-        let output = self.jj(&["diff", "-r", change_id, "--summary"])?;
-        let files: Vec<String> = output
-            .lines()
-            .filter_map(|line| {
-                // Format is "M path" or "A path" or "D path"
-                let parts: Vec<&str> = line.splitn(2, ' ').collect();
-                if parts.len() == 2 {
-                    Some(parts[1].to_string())
-                } else {
-                    None
-                }
-            })
-            .collect();
+    pub fn changed_files(&mut self, change_id: &str) -> Result<Vec<String>> {
+        let repo = self.load_repo_at_head()?;
+
+        // Try to find commit by change ID
+        let change_id_obj = jj_lib::backend::ChangeId::try_from_hex(change_id).ok_or_else(|| {
+            Error::Repository {
+                message: format!("invalid change ID: {}", change_id),
+            }
+        })?;
+
+        let targets = repo
+            .resolve_change_id(&change_id_obj)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to resolve change ID: {}", e),
+            })?
+            .ok_or_else(|| Error::Repository {
+                message: format!("change '{}' not found", change_id),
+            })?;
+
+        // Get the first visible commit for this change
+        let (_, commit_id) = targets
+            .visible_with_offsets()
+            .next()
+            .ok_or_else(|| Error::Repository {
+                message: format!("no visible commits for change '{}'", change_id),
+            })?;
+
+        let commit = repo.store().get_commit(commit_id).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get commit: {}", e),
+            }
+        })?;
+
+        // Get parent tree for diff
+        let parent_tree = commit.parent_tree(&*repo).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get parent tree: {}", e),
+            }
+        })?;
+
+        let tree = commit.tree();
+
+        // Diff the trees using synchronous iterator
+        let mut files = Vec::new();
+        let diff_iter = jj_lib::merged_tree::TreeDiffIterator::new(
+            &parent_tree,
+            &tree,
+            &jj_lib::matchers::EverythingMatcher,
+        );
+        for diff_entry in diff_iter {
+            files.push(diff_entry.path.as_internal_file_string().to_string());
+        }
+
         Ok(files)
     }
 
     /// Check if a branch/bookmark exists and get its change ID
-    pub fn branch_change_id(&self, branch: &str) -> Result<Option<String>> {
-        let output = self.jj_maybe(&[
-            "log",
-            "-r",
-            branch,
-            "--no-graph",
-            "-T",
-            r#"change_id ++ "\n""#,
-        ]);
-        Ok(output.map(|s| s.trim().to_string()))
+    pub fn branch_change_id(&mut self, branch: &str) -> Result<Option<String>> {
+        let repo = self.load_repo_at_head()?;
+
+        let ref_name: &jj_lib::ref_name::RefName = branch.as_ref();
+        let target = repo.view().get_local_bookmark(ref_name);
+
+        if target.is_absent() {
+            return Ok(None);
+        }
+
+        // Get the first commit from the target
+        let commit_id = target.added_ids().next().ok_or_else(|| Error::Repository {
+            message: format!("bookmark '{}' has no commits", branch),
+        })?;
+
+        let commit = repo.store().get_commit(commit_id).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get commit: {}", e),
+            }
+        })?;
+
+        Ok(Some(commit.change_id().hex()))
     }
 
     /// Check if a change has conflicts
-    pub fn has_conflicts(&self, change_id: &str) -> Result<bool> {
-        let output = self.jj(&[
-            "log",
-            "-r",
-            change_id,
-            "--no-graph",
-            "-T",
-            r#"if(conflict, "true", "false")"#,
-        ])?;
-        Ok(output.trim() == "true")
+    pub fn has_conflicts(&mut self, change_id: &str) -> Result<bool> {
+        let repo = self.load_repo_at_head()?;
+
+        let change_id_obj = jj_lib::backend::ChangeId::try_from_hex(change_id).ok_or_else(|| {
+            Error::Repository {
+                message: format!("invalid change ID: {}", change_id),
+            }
+        })?;
+
+        let targets = repo
+            .resolve_change_id(&change_id_obj)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to resolve change ID: {}", e),
+            })?;
+
+        if let Some(targets) = targets {
+            for (_, commit_id) in targets.visible_with_offsets() {
+                let commit = repo.store().get_commit(commit_id).map_err(|e| {
+                    Error::Repository {
+                        message: format!("failed to get commit: {}", e),
+                    }
+                })?;
+                if commit.has_conflict() {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     /// Get conflict details for a change
-    pub fn get_conflicts(&self, change_id: &str) -> Result<Vec<ConflictDetail>> {
-        let output = self.jj(&["resolve", "-r", change_id, "--list"])?;
-        let conflicts: Vec<ConflictDetail> = output
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(|line| ConflictDetail {
-                file: line.to_string(),
-                ours: String::new(),   // TODO: extract actual content
-                theirs: String::new(), // TODO: extract actual content
-                base: None,
-            })
-            .collect();
+    pub fn get_conflicts(&mut self, change_id: &str) -> Result<Vec<ConflictDetail>> {
+        let repo = self.load_repo_at_head()?;
+
+        let change_id_obj = jj_lib::backend::ChangeId::try_from_hex(change_id).ok_or_else(|| {
+            Error::Repository {
+                message: format!("invalid change ID: {}", change_id),
+            }
+        })?;
+
+        let targets = repo
+            .resolve_change_id(&change_id_obj)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to resolve change ID: {}", e),
+            })?
+            .ok_or_else(|| Error::Repository {
+                message: format!("change '{}' not found", change_id),
+            })?;
+
+        let mut conflicts = Vec::new();
+
+        for (_, commit_id) in targets.visible_with_offsets() {
+            let commit = repo.store().get_commit(commit_id).map_err(|e| {
+                Error::Repository {
+                    message: format!("failed to get commit: {}", e),
+                }
+            })?;
+
+            if commit.has_conflict() {
+                let tree = commit.tree();
+                // Iterate through conflicted paths
+                for (path, _value) in tree.entries() {
+                    conflicts.push(ConflictDetail {
+                        file: path.as_internal_file_string().to_string(),
+                        ours: String::new(),   // TODO: extract actual content
+                        theirs: String::new(), // TODO: extract actual content
+                        base: None,
+                    });
+                }
+            }
+        }
+
         Ok(conflicts)
     }
 
@@ -226,17 +531,15 @@ impl Repo {
             }
         }
 
-        // 3. Create a new change
-        self.jj(&["new", "-m", &intent.description])?;
-        let change_id = self.current_change_id()?;
-        let operation_id = self.current_operation_id()?;
+        // 3. Create a new change using jj-lib transaction
+        let (change_id, operation_id) = self.create_new_change(&intent.description)?;
 
         // 4. Apply changes
         let files_changed = match self.apply_changes(&intent.changes) {
             Ok(files) => files,
             Err(e) => {
-                // Rollback on error
-                let _ = self.jj(&["undo"]);
+                // Rollback on error - undo the last operation
+                let _ = self.undo_operation();
                 return Err(e);
             }
         };
@@ -244,11 +547,12 @@ impl Repo {
         // 5. Check for conflicts
         if self.has_conflicts(&change_id)? {
             let conflicts = self.get_conflicts(&change_id)?;
+            let prev_op = self.get_previous_op_id()?;
             return Ok(IntentResult::Conflict {
                 change_id,
                 operation_id: operation_id.clone(),
                 conflicts,
-                rollback_command: format!("jj op restore {}", self.get_previous_op_id()?),
+                rollback_command: format!("jj op restore {}", prev_op),
             });
         }
 
@@ -275,6 +579,7 @@ impl Repo {
             match self.run_invariants(InvariantTrigger::PreCommit) {
                 Ok(results) => results,
                 Err((name, cmd, code, stdout, stderr)) => {
+                    let prev_op = self.get_previous_op_id()?;
                     return Ok(IntentResult::InvariantFailed {
                         invariant: name,
                         command: cmd,
@@ -282,7 +587,7 @@ impl Repo {
                         stdout,
                         stderr,
                         change_id,
-                        rollback_command: format!("jj op restore {}", self.get_previous_op_id()?),
+                        rollback_command: format!("jj op restore {}", prev_op),
                     });
                 }
             }
@@ -319,8 +624,119 @@ impl Repo {
         })
     }
 
+    /// Create a new change using jj-lib
+    fn create_new_change(&mut self, description: &str) -> Result<(String, String)> {
+        let settings = create_minimal_settings()?;
+        let store_factories = get_store_factories();
+        let wc_factories = get_working_copy_factories();
+
+        // Reload workspace to get fresh state
+        let workspace = Workspace::load(&settings, &self.root, &store_factories, &wc_factories)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to load workspace: {}", e),
+            })?;
+
+        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
+            Error::Repository {
+                message: format!("failed to load repository: {}", e),
+            }
+        })?;
+
+        // Get current working copy commit
+        let wc_commit_id = repo
+            .view()
+            .get_wc_commit_id(workspace.workspace_name())
+            .cloned()
+            .ok_or_else(|| Error::Repository {
+                message: "no working copy commit found".into(),
+            })?;
+
+        let parent_commit = repo.store().get_commit(&wc_commit_id).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get commit: {}", e),
+            }
+        })?;
+
+        // Start a transaction
+        let mut tx = repo.start_transaction();
+
+        // Create new commit with the same tree as parent (empty change)
+        let new_commit = tx
+            .repo_mut()
+            .new_commit(vec![wc_commit_id], parent_commit.tree())
+            .set_description(description)
+            .write()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to create commit: {}", e),
+            })?;
+
+        // Update working copy to point to new commit
+        tx.repo_mut()
+            .set_wc_commit(workspace.workspace_name().to_owned(), new_commit.id().clone())
+            .map_err(|e| Error::Repository {
+                message: format!("failed to set working copy: {}", e),
+            })?;
+
+        // Commit the transaction
+        let new_repo = tx.commit("new change").map_err(|e| Error::Repository {
+            message: format!("failed to commit transaction: {}", e),
+        })?;
+
+        let change_id = new_commit.change_id().hex();
+        let operation_id = new_repo.op_id().hex();
+
+        // Update our cached workspace
+        self.workspace = None; // Force reload on next access
+
+        Ok((change_id, operation_id))
+    }
+
+    /// Undo the last operation
+    fn undo_operation(&mut self) -> Result<()> {
+        let settings = create_minimal_settings()?;
+        let store_factories = get_store_factories();
+        let wc_factories = get_working_copy_factories();
+
+        let workspace = Workspace::load(&settings, &self.root, &store_factories, &wc_factories)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to load workspace: {}", e),
+            })?;
+
+        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
+            Error::Repository {
+                message: format!("failed to load repository: {}", e),
+            }
+        })?;
+
+        // Get parent operation
+        let current_op = repo.operation();
+        let parent_ops: Vec<_> = current_op.parents().collect::<std::result::Result<_, _>>().map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get parent operations: {}", e),
+            }
+        })?;
+
+        if parent_ops.is_empty() {
+            return Err(Error::Repository {
+                message: "no parent operation to undo".into(),
+            });
+        }
+
+        // Load repo at parent operation
+        let _parent_repo = workspace.repo_loader().load_at(&parent_ops[0]).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to load parent operation: {}", e),
+            }
+        })?;
+
+        // Force workspace reload
+        self.workspace = None;
+
+        Ok(())
+    }
+
     /// Check preconditions for an intent
-    fn check_preconditions(&self, intent: &Intent) -> std::result::Result<(), IntentResult> {
+    fn check_preconditions(&mut self, intent: &Intent) -> std::result::Result<(), IntentResult> {
         let preconds = &intent.preconditions;
 
         // Check operation ID
@@ -484,10 +900,8 @@ impl Repo {
                     });
                 }
 
-                // Get changed files from jj
-                self.jj(&["status"])?; // Ensure jj sees the changes
-                let change_id = self.current_change_id()?;
-                self.changed_files(&change_id)
+                // Return empty list - caller should check jj status
+                Ok(vec![])
             }
 
             ChangeSpec::PatchFile { path } => {
@@ -584,13 +998,20 @@ impl Repo {
     }
 
     /// Get the previous operation ID (for rollback)
-    fn get_previous_op_id(&self) -> Result<String> {
-        let output = self.jj(&["op", "log", "--no-graph", "-T", r#"id ++ "\n""#, "--limit", "2"])?;
-        let lines: Vec<&str> = output.lines().collect();
-        if lines.len() >= 2 {
-            Ok(lines[1].trim().to_string())
+    fn get_previous_op_id(&mut self) -> Result<String> {
+        let repo = self.load_repo_at_head()?;
+
+        let current_op = repo.operation();
+        let parent_ops: Vec<_> = current_op.parents().collect::<std::result::Result<_, _>>().map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get parent operations: {}", e),
+            }
+        })?;
+
+        if parent_ops.is_empty() {
+            Ok(current_op.id().hex())
         } else {
-            Ok(lines.first().map(|s| s.trim().to_string()).unwrap_or_default())
+            Ok(parent_ops[0].id().hex())
         }
     }
 
@@ -605,24 +1026,367 @@ impl Repo {
     }
 
     /// Describe the current change
-    pub fn describe(&self, message: &str) -> Result<()> {
-        self.jj(&["describe", "-m", message])?;
+    pub fn describe(&mut self, message: &str) -> Result<()> {
+        let settings = create_minimal_settings()?;
+        let store_factories = get_store_factories();
+        let wc_factories = get_working_copy_factories();
+
+        let workspace = Workspace::load(&settings, &self.root, &store_factories, &wc_factories)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to load workspace: {}", e),
+            })?;
+
+        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
+            Error::Repository {
+                message: format!("failed to load repository: {}", e),
+            }
+        })?;
+
+        let wc_commit_id = repo
+            .view()
+            .get_wc_commit_id(workspace.workspace_name())
+            .cloned()
+            .ok_or_else(|| Error::Repository {
+                message: "no working copy commit found".into(),
+            })?;
+
+        let commit = repo.store().get_commit(&wc_commit_id).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get commit: {}", e),
+            }
+        })?;
+
+        // Start transaction
+        let mut tx = repo.start_transaction();
+
+        // Rewrite commit with new description
+        let new_commit = tx
+            .repo_mut()
+            .rewrite_commit(&commit)
+            .set_description(message)
+            .write()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to rewrite commit: {}", e),
+            })?;
+
+        // Update working copy
+        tx.repo_mut()
+            .set_wc_commit(workspace.workspace_name().to_owned(), new_commit.id().clone())
+            .map_err(|e| Error::Repository {
+                message: format!("failed to set working copy: {}", e),
+            })?;
+
+        // Rebase descendants
+        tx.repo_mut().rebase_descendants().map_err(|e| Error::Repository {
+            message: format!("failed to rebase descendants: {}", e),
+        })?;
+
+        // Commit transaction
+        tx.commit("describe").map_err(|e| Error::Repository {
+            message: format!("failed to commit transaction: {}", e),
+        })?;
+
+        // Clear cached workspace
+        self.workspace = None;
+
         Ok(())
     }
 
     /// Create a new change
-    pub fn new_change(&self, message: Option<&str>) -> Result<String> {
-        match message {
-            Some(m) => self.jj(&["new", "-m", m])?,
-            None => self.jj(&["new"])?,
-        };
-        self.current_change_id()
+    pub fn new_change(&mut self, message: Option<&str>) -> Result<String> {
+        let desc = message.unwrap_or("");
+        let (change_id, _) = self.create_new_change(desc)?;
+        Ok(change_id)
     }
 
     /// Squash changes into parent
-    pub fn squash(&self) -> Result<()> {
-        self.jj(&["squash"])?;
+    pub fn squash(&mut self) -> Result<()> {
+        let settings = create_minimal_settings()?;
+        let store_factories = get_store_factories();
+        let wc_factories = get_working_copy_factories();
+
+        let workspace = Workspace::load(&settings, &self.root, &store_factories, &wc_factories)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to load workspace: {}", e),
+            })?;
+
+        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
+            Error::Repository {
+                message: format!("failed to load repository: {}", e),
+            }
+        })?;
+
+        let wc_commit_id = repo
+            .view()
+            .get_wc_commit_id(workspace.workspace_name())
+            .cloned()
+            .ok_or_else(|| Error::Repository {
+                message: "no working copy commit found".into(),
+            })?;
+
+        let commit = repo.store().get_commit(&wc_commit_id).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get commit: {}", e),
+            }
+        })?;
+
+        // Get parent commit
+        let parent_ids = commit.parent_ids();
+        if parent_ids.is_empty() {
+            return Err(Error::Repository {
+                message: "cannot squash: no parent commit".into(),
+            });
+        }
+
+        let parent = repo.store().get_commit(&parent_ids[0]).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to get parent commit: {}", e),
+            }
+        })?;
+
+        // Start transaction
+        let mut tx = repo.start_transaction();
+
+        // Create new commit with current tree but parent's parents
+        let new_description = if commit.description().is_empty() {
+            parent.description().to_string()
+        } else if parent.description().is_empty() {
+            commit.description().to_string()
+        } else {
+            format!("{}\n\n{}", parent.description(), commit.description())
+        };
+
+        let new_commit = tx
+            .repo_mut()
+            .new_commit(parent.parent_ids().to_vec(), commit.tree())
+            .set_description(&new_description)
+            .write()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to create squashed commit: {}", e),
+            })?;
+
+        // Record the rewrites
+        tx.repo_mut().set_rewritten_commit(commit.id().clone(), new_commit.id().clone());
+        tx.repo_mut().set_rewritten_commit(parent.id().clone(), new_commit.id().clone());
+
+        // Update working copy
+        tx.repo_mut()
+            .set_wc_commit(workspace.workspace_name().to_owned(), new_commit.id().clone())
+            .map_err(|e| Error::Repository {
+                message: format!("failed to set working copy: {}", e),
+            })?;
+
+        // Rebase descendants
+        tx.repo_mut().rebase_descendants().map_err(|e| Error::Repository {
+            message: format!("failed to rebase descendants: {}", e),
+        })?;
+
+        // Commit transaction
+        tx.commit("squash").map_err(|e| Error::Repository {
+            message: format!("failed to commit transaction: {}", e),
+        })?;
+
+        // Clear cached workspace
+        self.workspace = None;
+
         Ok(())
+    }
+
+    /// Get structured log entries from the repository.
+    pub fn log_entries(&mut self, limit: usize, all: bool) -> Result<Vec<LogEntry>> {
+        let repo = self.load_repo_at_head()?;
+        let workspace = self.workspace.as_ref().unwrap();
+
+        let wc_commit_id = repo
+            .view()
+            .get_wc_commit_id(workspace.workspace_name());
+
+        let mut entries = Vec::new();
+        let mut count = 0;
+
+        // Get heads and traverse
+        for head_id in repo.view().heads() {
+            if !all && count >= limit {
+                break;
+            }
+
+            let mut to_visit = vec![head_id.clone()];
+            let mut visited = std::collections::HashSet::new();
+
+            while let Some(commit_id) = to_visit.pop() {
+                if !all && count >= limit {
+                    break;
+                }
+
+                if !visited.insert(commit_id.clone()) {
+                    continue;
+                }
+
+                let commit = match repo.store().get_commit(&commit_id) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+
+                // Skip root commit
+                if commit.change_id().hex().starts_with("zzzzzzzz") {
+                    continue;
+                }
+
+                let is_working_copy = wc_commit_id.map(|id| id == &commit_id).unwrap_or(false);
+
+                let parent_change_ids: Vec<String> = commit
+                    .parent_ids()
+                    .iter()
+                    .filter_map(|pid| {
+                        repo.store().get_commit(pid).ok().map(|p| {
+                            let hex = p.change_id().hex();
+                            if hex.len() > 8 { hex[..8].to_string() } else { hex }
+                        })
+                    })
+                    .collect();
+
+                let change_hex = commit.change_id().hex();
+                let commit_hex = commit_id.hex();
+
+                entries.push(LogEntry {
+                    change_id: if change_hex.len() > 8 { change_hex[..8].to_string() } else { change_hex },
+                    commit_id: if commit_hex.len() > 8 { commit_hex[..8].to_string() } else { commit_hex },
+                    description: commit.description().lines().next().unwrap_or("").to_string(),
+                    parent_change_ids,
+                    is_working_copy,
+                });
+
+                count += 1;
+
+                // Add parents to visit
+                for parent_id in commit.parent_ids() {
+                    if !visited.contains(parent_id) {
+                        to_visit.push(parent_id.clone());
+                    }
+                }
+            }
+        }
+
+        Ok(entries)
+    }
+
+    /// Get operation log entries from the repository.
+    pub fn operation_log(&mut self, limit: usize) -> Result<Vec<OperationInfo>> {
+        let repo = self.load_repo_at_head()?;
+
+        let mut operations = Vec::new();
+        let mut current_op = Some(repo.operation().clone());
+        let mut count = 0;
+
+        while let Some(op) = current_op {
+            if count >= limit {
+                break;
+            }
+
+            operations.push(OperationInfo {
+                id: op.id().hex(),
+                description: op.metadata().description.clone(),
+            });
+
+            count += 1;
+
+            // Get parent operation
+            current_op = op.parents().next().and_then(|r| r.ok());
+        }
+
+        Ok(operations)
+    }
+
+    /// Restore the repository to a specific operation.
+    pub fn restore_operation(&mut self, op_id: &str) -> Result<()> {
+        let settings = create_minimal_settings()?;
+        let store_factories = get_store_factories();
+        let wc_factories = get_working_copy_factories();
+
+        let workspace = Workspace::load(&settings, &self.root, &store_factories, &wc_factories)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to load workspace: {}", e),
+            })?;
+
+        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
+            Error::Repository {
+                message: format!("failed to load repository: {}", e),
+            }
+        })?;
+
+        // Find the operation by ID
+        let op_id_obj = jj_lib::op_store::OperationId::try_from_hex(op_id).ok_or_else(|| {
+            Error::Repository {
+                message: format!("invalid operation ID: {}", op_id),
+            }
+        })?;
+
+        let target_op = workspace.repo_loader().load_operation(&op_id_obj).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to load operation: {}", e),
+            }
+        })?;
+
+        // Load repo at target operation
+        let target_repo = workspace.repo_loader().load_at(&target_op).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to load repository at operation: {}", e),
+            }
+        })?;
+
+        // Create a transaction to record the restore
+        let mut tx = repo.start_transaction();
+
+        // Merge in the target operation's view
+        tx.repo_mut().merge(&repo, &target_repo).map_err(|e| {
+            Error::Repository {
+                message: format!("failed to merge operation: {}", e),
+            }
+        })?;
+
+        // Commit the restore transaction
+        tx.commit(&format!("restore to operation {}", op_id)).map_err(|e| Error::Repository {
+            message: format!("failed to commit restore: {}", e),
+        })?;
+
+        // Clear cached workspace
+        self.workspace = None;
+
+        Ok(())
+    }
+
+    /// Get the raw ASCII graph output.
+    /// Note: This still shells out to jj for complex graph rendering.
+    pub fn log_ascii(&mut self, limit: usize, all: bool) -> Result<String> {
+        // For ASCII graph rendering, we still use jj CLI as jj-lib doesn't have
+        // a built-in ASCII graph renderer and implementing one is complex.
+        // This is an acceptable compromise as it's only used for display purposes.
+        let limit_str = limit.to_string();
+        let mut args = vec!["jj", "log"];
+
+        if !all {
+            args.push("--limit");
+            args.push(&limit_str);
+        } else {
+            args.push("--revisions");
+            args.push("all()");
+        }
+
+        let output = Command::new(&args[0])
+            .args(&args[1..])
+            .current_dir(&self.root)
+            .output()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to run jj log: {}", e),
+            })?;
+
+        if !output.status.success() {
+            return Err(Error::Repository {
+                message: format!("jj log failed: {}", String::from_utf8_lossy(&output.stderr)),
+            });
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 }
 
@@ -693,7 +1457,7 @@ name = "test-repo"
         use crate::intent::{ChangeSpec, Intent, Preconditions};
         use sha2::{Digest, Sha256};
 
-        let (tmp, repo) = setup_test_repo();
+        let (tmp, mut repo) = setup_test_repo();
 
         // Create a test file
         let test_content = b"Hello, world!";

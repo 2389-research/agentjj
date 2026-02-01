@@ -1,0 +1,10 @@
+change_id = "1eeb44fd13a8d62b336ff23114c6e2c3"
+type = "behavioral"
+category = "feature"
+intent = "Embed jj-lib directly, auto-colocate with git repos, add graph command"
+files = []
+breaking = false
+
+[invariants]
+checked = []
+status = "unknown"

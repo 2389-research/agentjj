@@ -1,9 +1,0 @@
-change_id = "feature"
-type = "behavioral"
-intent = "Test change for scenario"
-files = []
-breaking = false
-
-[invariants]
-checked = []
-status = "unknown"

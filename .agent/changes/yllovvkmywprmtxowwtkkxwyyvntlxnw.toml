@@ -1,0 +1,10 @@
+change_id = "yllovvkmywprmtxowwtkkxwyyvntlxnw"
+type = "behavioral"
+category = "feature"
+intent = "Test with fixed parsing"
+files = []
+breaking = false
+
+[invariants]
+checked = []
+status = "unknown"

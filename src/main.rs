@@ -125,6 +125,125 @@ enum Commands {
         #[arg(long, default_value = "main")]
         target: String,
     },
+
+    /// Complete repository orientation for agents - everything you need to start working
+    Orient,
+
+    /// Create a named checkpoint for easy recovery
+    Checkpoint {
+        /// Checkpoint name
+        name: String,
+
+        /// Description of what state this captures
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+
+    /// Undo the last operation (restore to previous state)
+    Undo {
+        /// Number of operations to undo (default: 1)
+        #[arg(short, long, default_value = "1")]
+        steps: usize,
+
+        /// Restore to a named checkpoint
+        #[arg(long, conflicts_with = "steps")]
+        to: Option<String>,
+
+        /// Dry run - show what would be undone without doing it
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Bulk operations for efficiency
+    Bulk {
+        #[command(subcommand)]
+        action: BulkAction,
+    },
+
+    /// Show what files exist and their properties
+    Files {
+        /// Glob pattern to filter files
+        #[arg(short, long)]
+        pattern: Option<String>,
+
+        /// Include symbol counts per file
+        #[arg(long)]
+        symbols: bool,
+    },
+
+    /// Show semantic diff of current changes
+    Diff {
+        /// Compare against this revision (default: @-)
+        #[arg(short, long)]
+        against: Option<String>,
+
+        /// Include AI-generated explanation of changes
+        #[arg(long)]
+        explain: bool,
+    },
+
+    /// Analyze what would be affected by changing a symbol
+    Affected {
+        /// Symbol to analyze (e.g., src/api.rs::process)
+        symbol: String,
+
+        /// Depth of dependency analysis (default: 2)
+        #[arg(short, long, default_value = "2")]
+        depth: usize,
+    },
+
+    /// Print JSON schemas for all output types (self-documenting)
+    Schema {
+        /// Specific type to show schema for
+        #[arg(short, long)]
+        r#type: Option<String>,
+    },
+
+    /// Validate current changes are complete and ready
+    Validate,
+
+    /// Suggest next actions based on current state
+    Suggest,
+
+    /// Output the repository DAG in various formats
+    Graph {
+        /// Output format: ascii (default), mermaid, dot (graphviz)
+        #[arg(long, default_value = "ascii")]
+        format: String,
+
+        /// Number of commits to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+
+        /// Show all branches, not just current
+        #[arg(long)]
+        all: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum BulkAction {
+    /// Read multiple files at once
+    Read {
+        /// File paths (space-separated)
+        paths: Vec<String>,
+    },
+
+    /// Query symbols across multiple files
+    Symbols {
+        /// Glob pattern (e.g., "src/**/*.rs")
+        pattern: String,
+
+        /// Only show public symbols
+        #[arg(long)]
+        public_only: bool,
+    },
+
+    /// Get context for multiple symbols
+    Context {
+        /// Symbol paths (e.g., "src/a.rs::foo src/b.rs::bar")
+        symbols: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -165,7 +284,7 @@ enum ChangeAction {
     /// Add or update typed change metadata
     Set {
         /// Change ID (default: current)
-        #[arg(short, long)]
+        #[arg(long)]
         change_id: Option<String>,
 
         /// Intent description
@@ -177,7 +296,7 @@ enum ChangeAction {
         r#type: String,
 
         /// Category
-        #[arg(short, long)]
+        #[arg(short = 'c', long)]
         category: Option<String>,
 
         /// Mark as breaking
@@ -186,9 +305,29 @@ enum ChangeAction {
     },
 }
 
-fn main() -> Result<()> {
+fn main() {
     let cli = Cli::parse();
+    let json_mode = cli.json;
 
+    let result = run_command(cli);
+
+    if let Err(e) = result {
+        if json_mode {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "error": true,
+                    "message": e.to_string()
+                })
+            );
+        } else {
+            eprintln!("Error: {}", e);
+        }
+        std::process::exit(1);
+    }
+}
+
+fn run_command(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { name } => cmd_init(name, cli.json),
         Commands::Status => cmd_status(cli.json),
@@ -222,6 +361,17 @@ fn main() -> Result<()> {
             body,
             target,
         } => cmd_push(branch, pr, title, body, target, cli.json),
+        Commands::Orient => cmd_orient(cli.json),
+        Commands::Checkpoint { name, description } => cmd_checkpoint(name, description, cli.json),
+        Commands::Undo { steps, to, dry_run } => cmd_undo(steps, to, dry_run, cli.json),
+        Commands::Bulk { action } => cmd_bulk(action, cli.json),
+        Commands::Files { pattern, symbols } => cmd_files(pattern, symbols, cli.json),
+        Commands::Diff { against, explain } => cmd_diff(against, explain, cli.json),
+        Commands::Affected { symbol, depth } => cmd_affected(symbol, depth, cli.json),
+        Commands::Schema { r#type } => cmd_schema(r#type, cli.json),
+        Commands::Validate => cmd_validate(cli.json),
+        Commands::Suggest => cmd_suggest(cli.json),
+        Commands::Graph { format, limit, all } => cmd_graph(format, limit, all, cli.json),
     }
 }
 
@@ -275,7 +425,7 @@ fn cmd_init(name: Option<String>, json: bool) -> Result<()> {
 }
 
 fn cmd_status(json: bool) -> Result<()> {
-    let repo = Repo::discover()?;
+    let mut repo = Repo::discover()?;
 
     let change_id = repo.current_change_id().unwrap_or_else(|_| "unknown".into());
     let operation_id = repo.current_operation_id().unwrap_or_else(|_| "unknown".into());
@@ -360,7 +510,7 @@ fn cmd_manifest(action: ManifestAction, json: bool) -> Result<()> {
 }
 
 fn cmd_change(action: ChangeAction, json: bool) -> Result<()> {
-    let repo = Repo::discover()?;
+    let mut repo = Repo::discover()?;
 
     match action {
         ChangeAction::Show { change_id } => {
@@ -380,18 +530,21 @@ fn cmd_change(action: ChangeAction, json: bool) -> Result<()> {
                 let change_type = parse_change_type(&type_str)?;
                 index.by_type(change_type)
             } else {
-                // All changes - we need to collect differently
-                Vec::new() // TODO: add all() method to ChangeIndex
+                index.all()
             };
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&changes)?);
             } else {
-                for change in changes {
-                    println!(
-                        "{} [{:?}] {}",
-                        change.change_id, change.change_type, change.intent
-                    );
+                if changes.is_empty() {
+                    println!("No typed changes found");
+                } else {
+                    for change in changes {
+                        println!(
+                            "{} [{:?}] {}",
+                            change.change_id, change.change_type, change.intent
+                        );
+                    }
                 }
             }
         }
@@ -402,7 +555,11 @@ fn cmd_change(action: ChangeAction, json: bool) -> Result<()> {
             category,
             breaking,
         } => {
-            let cid = change_id.unwrap_or_else(|| "@".to_string()); // TODO: resolve @ to actual ID
+            // Resolve @ to actual jj change ID
+            let cid = match change_id {
+                Some(id) if id != "@" => id,
+                _ => repo.current_change_id()?,
+            };
             let change_type = parse_change_type(&r#type)?;
             let category = category.map(|c| parse_category(&c)).transpose()?;
 
@@ -475,6 +632,8 @@ fn cmd_apply(
     // Apply
     let result = repo.apply(intent)?;
 
+    let is_success = matches!(&result, agentjj::intent::IntentResult::Success { .. });
+
     if json {
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
@@ -486,17 +645,47 @@ fn cmd_apply(
             agentjj::intent::IntentResult::Conflict { conflicts, .. } => {
                 println!("✗ Conflict in {} files", conflicts.len());
             }
-            _ => {
-                println!("{:?}", result);
+            agentjj::intent::IntentResult::PreconditionFailed {
+                reason,
+                expected,
+                actual,
+            } => {
+                println!("✗ Precondition failed: {}", reason);
+                println!("  expected: {}", expected);
+                println!("  actual: {}", actual);
+            }
+            agentjj::intent::IntentResult::InvariantFailed {
+                invariant,
+                stderr,
+                exit_code,
+                ..
+            } => {
+                println!("✗ Invariant '{}' failed (exit {})", invariant, exit_code);
+                if !stderr.is_empty() {
+                    println!("  stderr: {}", stderr);
+                }
+            }
+            agentjj::intent::IntentResult::PermissionDenied { path, action, rule, .. } => {
+                println!("✗ Permission denied: {} on '{}' (rule: {})", action, path, rule);
+            }
+            agentjj::intent::IntentResult::RequiresReview { message, paths, .. } => {
+                println!("⚠ Requires human review: {}", message);
+                if !paths.is_empty() {
+                    println!("  paths: {}", paths.join(", "));
+                }
             }
         }
+    }
+
+    if !is_success {
+        std::process::exit(1);
     }
 
     Ok(())
 }
 
 fn cmd_read(path: String, at: Option<String>, json: bool) -> Result<()> {
-    let repo = Repo::discover()?;
+    let mut repo = Repo::discover()?;
     let content = repo.read_file(&path, at.as_deref())?;
 
     if json {
@@ -533,7 +722,7 @@ fn cmd_symbol(path: String, signature_only: bool, json: bool) -> Result<()> {
     let content = if file_path_obj.is_absolute() {
         std::fs::read_to_string(file_path)?
     } else {
-        let repo = Repo::discover()?;
+        let mut repo = Repo::discover()?;
         repo.read_file(file_path, None)?
     };
 
@@ -623,12 +812,30 @@ fn parse_category(s: &str) -> Result<ChangeCategory> {
     }
 }
 
+/// Check if a symbol is public based on language conventions
+fn is_public_symbol(symbol: &agentjj::symbols::Symbol, lang: agentjj::SupportedLanguage) -> bool {
+    match lang {
+        agentjj::SupportedLanguage::Rust => {
+            // Rust: check for "pub" keyword in signature
+            symbol.signature.as_ref().map(|sig: &String| sig.contains("pub")).unwrap_or(false)
+        }
+        agentjj::SupportedLanguage::Python => {
+            // Python: underscore prefix means private (convention)
+            !symbol.name.starts_with('_')
+        }
+        agentjj::SupportedLanguage::JavaScript | agentjj::SupportedLanguage::TypeScript => {
+            // JS/TS: check for "export" keyword in signature
+            symbol.signature.as_ref().map(|sig: &String| sig.contains("export")).unwrap_or(true)
+        }
+    }
+}
+
 fn cmd_context(path: String, json: bool) -> Result<()> {
-    // Parse path: "file.py::symbol_name"
+    // Parse path: "path/to/file.ext::symbol_name"
     let (file_path, symbol_name) = if let Some(idx) = path.find("::") {
         (&path[..idx], &path[idx + 2..])
     } else {
-        anyhow::bail!("Symbol path must be file.py::symbol_name");
+        anyhow::bail!("Symbol path must be path/to/file::symbol_name (e.g., src/main.rs::main)");
     };
 
     let file_path_obj = std::path::Path::new(file_path);
@@ -641,7 +848,7 @@ fn cmd_context(path: String, json: bool) -> Result<()> {
     let content = if file_path_obj.is_absolute() {
         std::fs::read_to_string(file_path)?
     } else {
-        let repo = Repo::discover()?;
+        let mut repo = Repo::discover()?;
         repo.read_file(file_path, None)?
     };
 
@@ -692,7 +899,7 @@ fn cmd_push(
     target: String,
     json: bool,
 ) -> Result<()> {
-    let repo = Repo::discover()?;
+    let mut repo = Repo::discover()?;
 
     // Determine branch name
     let branch_name = branch.unwrap_or_else(|| {
@@ -783,4 +990,1464 @@ fn cmd_push(
     }
 
     Ok(())
+}
+
+/// Complete repository orientation - everything an agent needs to start working
+fn cmd_orient(json: bool) -> Result<()> {
+    let mut repo = Repo::discover()?;
+
+    let change_id = repo.current_change_id().unwrap_or_else(|_| "unknown".into());
+    let operation_id = repo.current_operation_id().unwrap_or_else(|_| "unknown".into());
+    let files = repo.changed_files(&change_id).unwrap_or_default();
+    let has_manifest = repo.has_manifest();
+
+    // Get manifest info
+    let manifest_info = if has_manifest {
+        repo.manifest().ok().map(|m| {
+            serde_json::json!({
+                "name": m.repo.name,
+                "description": m.repo.description,
+                "languages": m.repo.languages,
+                "invariants_count": m.invariants.len(),
+                "permissions": {
+                    "allow": m.permissions.allow_change,
+                    "deny": m.permissions.deny_change,
+                },
+            })
+        })
+    } else {
+        None
+    };
+
+    // Count files by extension
+    let mut file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut total_files = 0;
+
+    // Patterns to exclude from file counting
+    let exclude_patterns = [".jj", ".git", "target/", "node_modules/", ".agent/", "__pycache__", ".pyc", "venv/", ".venv/"];
+
+    if let Ok(entries) = glob::glob(&format!("{}/**/*", repo.root().display())) {
+        for entry in entries.flatten() {
+            let path_str = entry.to_string_lossy();
+            let should_exclude = exclude_patterns.iter().any(|p| path_str.contains(p));
+
+            if entry.is_file() && !should_exclude {
+                total_files += 1;
+                if let Some(ext) = entry.extension() {
+                    *file_counts.entry(ext.to_string_lossy().to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // Get recent changes
+    let recent_output = std::process::Command::new("jj")
+        .current_dir(repo.root())
+        .args(["log", "--limit", "5", "-T", r#"change_id ++ " " ++ description.first_line() ++ "\n""#])
+        .output();
+
+    let recent_changes: Vec<serde_json::Value> = recent_output
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .filter(|l| !l.trim().is_empty())
+                        .map(|line| {
+                            let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                            serde_json::json!({
+                                "change_id": parts.get(0).unwrap_or(&""),
+                                "description": parts.get(1).unwrap_or(&"(no description)"),
+                            })
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // Get typed changes
+    let typed_changes = agentjj::change::ChangeIndex::load_from_repo(repo.root())
+        .ok()
+        .map(|idx| idx.all().len())
+        .unwrap_or(0);
+
+    let orientation = serde_json::json!({
+        "current_state": {
+            "change_id": change_id,
+            "operation_id": &operation_id[..32.min(operation_id.len())],
+            "uncommitted_files": files,
+        },
+        "repository": manifest_info,
+        "codebase": {
+            "total_files": total_files,
+            "by_extension": file_counts,
+            "typed_changes": typed_changes,
+        },
+        "recent_changes": recent_changes,
+        "capabilities": {
+            "symbol_query": ["python", "rust", "javascript", "typescript"],
+            "commands": [
+                "status", "read", "symbol", "context", "apply",
+                "change", "push", "orient", "checkpoint", "undo",
+                "bulk", "files", "diff", "affected", "validate", "suggest"
+            ],
+        },
+        "quick_start": {
+            "read_file": "agentjj read <path>",
+            "query_symbol": "agentjj symbol <file>::<name>",
+            "get_context": "agentjj context <file>::<name>",
+            "make_change": "agentjj apply --intent '...' --type behavioral --patch <file>",
+            "save_checkpoint": "agentjj checkpoint <name>",
+        },
+    });
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&orientation)?);
+    } else {
+        println!("=== Repository Orientation ===\n");
+        println!("Current change: {}", &change_id[..12.min(change_id.len())]);
+        if !files.is_empty() {
+            println!("Uncommitted: {} files", files.len());
+        }
+        println!();
+
+        if let Some(info) = &manifest_info {
+            println!("Project: {}", info["name"]);
+            if !info["description"].as_str().unwrap_or("").is_empty() {
+                println!("  {}", info["description"]);
+            }
+        }
+
+        println!("\nCodebase: {} files", total_files);
+        let mut sorted_counts: Vec<_> = file_counts.iter().collect();
+        sorted_counts.sort_by(|a, b| b.1.cmp(a.1));
+        for (ext, count) in sorted_counts.iter().take(5) {
+            println!("  .{}: {}", ext, count);
+        }
+
+        if !recent_changes.is_empty() {
+            println!("\nRecent changes:");
+            for c in recent_changes.iter().take(3) {
+                let cid = c["change_id"].as_str().unwrap_or("");
+                let short_id = &cid[..8.min(cid.len())];
+                println!("  {} {}", short_id, c["description"]);
+            }
+        }
+
+        println!("\n=== Quick Start ===");
+        println!("  agentjj symbol <file>           # List symbols in file");
+        println!("  agentjj context <file>::<name>  # Get symbol context");
+        println!("  agentjj bulk read <files...>    # Read multiple files");
+        println!("  agentjj checkpoint <name>       # Save restore point");
+    }
+
+    Ok(())
+}
+
+/// Create a named checkpoint
+fn cmd_checkpoint(name: String, description: Option<String>, json: bool) -> Result<()> {
+    let mut repo = Repo::discover()?;
+
+    let change_id = repo.current_change_id()?;
+    let operation_id = repo.current_operation_id()?;
+
+    // Store checkpoint as a file in .agent/checkpoints/
+    let checkpoints_dir = repo.root().join(".agent/checkpoints");
+    std::fs::create_dir_all(&checkpoints_dir)?;
+
+    let checkpoint = serde_json::json!({
+        "name": name,
+        "description": description,
+        "change_id": change_id,
+        "operation_id": operation_id,
+        "created_at": chrono_lite_now(),
+    });
+
+    let checkpoint_path = checkpoints_dir.join(format!("{}.json", name));
+    std::fs::write(&checkpoint_path, serde_json::to_string_pretty(&checkpoint)?)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "created": true,
+            "checkpoint": checkpoint,
+            "restore_command": format!("agentjj undo --to {}", name),
+        }))?);
+    } else {
+        println!("✓ Checkpoint '{}' created", name);
+        println!("  change: {}", &change_id[..12.min(change_id.len())]);
+        println!("  restore with: agentjj undo --to {}", name);
+    }
+
+    Ok(())
+}
+
+fn chrono_lite_now() -> String {
+    // Simple ISO 8601 timestamp without chrono dependency
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+
+    // Convert unix timestamp to ISO 8601 format
+    // Algorithm: days since epoch -> year/month/day, seconds -> hours:minutes:seconds
+    let days = secs / 86400;
+    let time_secs = secs % 86400;
+    let hours = time_secs / 3600;
+    let minutes = (time_secs % 3600) / 60;
+    let seconds = time_secs % 60;
+
+    // Calculate year/month/day from days since 1970-01-01
+    let mut year = 1970;
+    let mut remaining_days = days as i64;
+
+    loop {
+        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+
+    let is_leap = is_leap_year(year);
+    let days_in_months: [i64; 12] = if is_leap {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+
+    let mut month = 1;
+    for days_in_month in days_in_months.iter() {
+        if remaining_days < *days_in_month {
+            break;
+        }
+        remaining_days -= *days_in_month;
+        month += 1;
+    }
+    let day = remaining_days + 1;
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hours, minutes, seconds
+    )
+}
+
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+/// Undo operations or restore to checkpoint
+fn cmd_undo(steps: usize, to: Option<String>, dry_run: bool, json: bool) -> Result<()> {
+    let mut repo = Repo::discover()?;
+
+    // If --to is specified, restore to named checkpoint
+    if let Some(checkpoint_name) = to {
+        let checkpoint_path = repo.root().join(".agent/checkpoints").join(format!("{}.json", checkpoint_name));
+
+        if !checkpoint_path.exists() {
+            anyhow::bail!("Checkpoint '{}' not found", checkpoint_name);
+        }
+
+        let checkpoint_data: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&checkpoint_path)?)?;
+        let target_op = checkpoint_data["operation_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid checkpoint: missing operation_id"))?;
+
+        if dry_run {
+            if json {
+                println!("{}", serde_json::json!({
+                    "dry_run": true,
+                    "checkpoint": checkpoint_name,
+                    "would_restore_to": target_op,
+                    "checkpoint_data": checkpoint_data,
+                }));
+            } else {
+                println!("Would restore to checkpoint '{}'", checkpoint_name);
+                println!("Would restore to operation: {}...", &target_op[..16.min(target_op.len())]);
+            }
+            return Ok(());
+        }
+
+        // Restore to checkpoint operation using Repo method
+        repo.restore_operation(target_op)?;
+
+        if json {
+            println!("{}", serde_json::json!({
+                "restored": true,
+                "checkpoint": checkpoint_name,
+                "restored_to": target_op,
+            }));
+        } else {
+            println!("✓ Restored to checkpoint '{}'", checkpoint_name);
+        }
+
+        return Ok(());
+    }
+
+    // Otherwise, undo by steps
+    // Use Repo.operation_log() to find operations to undo
+    let operations = repo.operation_log(steps + 1)?;
+
+    if operations.len() <= steps {
+        anyhow::bail!("Not enough operations to undo {} steps", steps);
+    }
+
+    let target_op = &operations[steps].id;
+
+    if dry_run {
+        if json {
+            println!("{}", serde_json::json!({
+                "dry_run": true,
+                "would_restore_to": target_op,
+                "operations_to_undo": steps,
+            }));
+        } else {
+            println!("Would undo {} operation(s)", steps);
+            println!("Would restore to operation: {}...", &target_op[..16.min(target_op.len())]);
+        }
+        return Ok(());
+    }
+
+    // Actually undo using Repo method
+    repo.restore_operation(target_op)?;
+
+    if json {
+        println!("{}", serde_json::json!({
+            "undone": true,
+            "steps": steps,
+            "restored_to": target_op,
+        }));
+    } else {
+        println!("✓ Undid {} operation(s)", steps);
+    }
+
+    Ok(())
+}
+
+/// Bulk operations
+fn cmd_bulk(action: BulkAction, json: bool) -> Result<()> {
+    let mut repo = Repo::discover()?;
+
+    match action {
+        BulkAction::Read { paths } => {
+            let mut results = Vec::new();
+            let mut errors = Vec::new();
+
+            for path in &paths {
+                match repo.read_file(path, None) {
+                    Ok(content) => {
+                        results.push(serde_json::json!({
+                            "path": path,
+                            "content": content,
+                            "lines": content.lines().count(),
+                        }));
+                    }
+                    Err(e) => {
+                        errors.push(serde_json::json!({
+                            "path": path,
+                            "error": e.to_string(),
+                        }));
+                    }
+                }
+            }
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "files": results,
+                    "errors": errors,
+                    "summary": {
+                        "read": results.len(),
+                        "failed": errors.len(),
+                    }
+                }))?);
+            } else {
+                for r in &results {
+                    println!("=== {} ({} lines) ===", r["path"], r["lines"]);
+                    println!("{}", r["content"].as_str().unwrap_or(""));
+                    println!();
+                }
+                for e in &errors {
+                    eprintln!("Error reading {}: {}", e["path"], e["error"]);
+                }
+            }
+        }
+
+        BulkAction::Symbols { pattern, public_only } => {
+            let mut all_symbols = Vec::new();
+
+            // Use glob to find matching files
+            let glob_pattern = format!("{}/{}", repo.root().display(), pattern);
+            if let Ok(entries) = glob::glob(&glob_pattern) {
+                for entry in entries.flatten() {
+                    if entry.is_file() {
+                        if let Some(lang) = agentjj::SupportedLanguage::from_path(&entry) {
+                            if let Ok(content) = std::fs::read_to_string(&entry) {
+                                if let Ok(symbols) = agentjj::symbols::extract_symbols(&content, lang) {
+                                    let rel_path = entry.strip_prefix(repo.root()).unwrap_or(&entry);
+                                    for s in symbols {
+                                        if !public_only || is_public_symbol(&s, lang) {
+                                            all_symbols.push(serde_json::json!({
+                                                "file": rel_path.display().to_string(),
+                                                "name": s.name,
+                                                "kind": s.kind,
+                                                "line": s.start_line,
+                                                "signature": s.signature,
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "pattern": pattern,
+                    "symbols": all_symbols,
+                    "count": all_symbols.len(),
+                }))?);
+            } else {
+                println!("Found {} symbols matching '{}':", all_symbols.len(), pattern);
+                for s in &all_symbols {
+                    println!("  {}::{} ({:?}, line {})",
+                        s["file"], s["name"], s["kind"], s["line"]);
+                }
+            }
+        }
+
+        BulkAction::Context { symbols } => {
+            let mut results = Vec::new();
+            let mut errors = Vec::new();
+
+            for sym_path in &symbols {
+                if let Some(idx) = sym_path.find("::") {
+                    let (file_path, symbol_name) = (&sym_path[..idx], &sym_path[idx + 2..]);
+                    let file_path_obj = std::path::Path::new(file_path);
+
+                    if let Some(lang) = agentjj::SupportedLanguage::from_path(file_path_obj) {
+                        let content_result: Result<String> = if file_path_obj.is_absolute() {
+                            std::fs::read_to_string(file_path).map_err(|e| anyhow::anyhow!("{}", e))
+                        } else {
+                            repo.read_file(file_path, None).map_err(|e| anyhow::anyhow!("{}", e))
+                        };
+
+                        match content_result {
+                            Ok(content) => {
+                                match agentjj::symbols::get_symbol_context(&content, lang, symbol_name) {
+                                    Ok(Some(ctx)) => {
+                                        results.push(serde_json::json!({
+                                            "path": sym_path,
+                                            "context": ctx,
+                                        }));
+                                    }
+                                    Ok(None) => {
+                                        errors.push(serde_json::json!({
+                                            "path": sym_path,
+                                            "error": "symbol not found",
+                                        }));
+                                    }
+                                    Err(e) => {
+                                        errors.push(serde_json::json!({
+                                            "path": sym_path,
+                                            "error": e.to_string(),
+                                        }));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                errors.push(serde_json::json!({
+                                    "path": sym_path,
+                                    "error": e.to_string(),
+                                }));
+                            }
+                        }
+                    } else {
+                        errors.push(serde_json::json!({
+                            "path": sym_path,
+                            "error": "unsupported file type",
+                        }));
+                    }
+                } else {
+                    errors.push(serde_json::json!({
+                        "path": sym_path,
+                        "error": "invalid format, expected file::symbol",
+                    }));
+                }
+            }
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "contexts": results,
+                    "errors": errors,
+                }))?);
+            } else {
+                for r in &results {
+                    println!("=== {} ===", r["path"]);
+                    let ctx = &r["context"];
+                    println!("  {} ({:?})", ctx["name"], ctx["kind"]);
+                    if let Some(sig) = ctx["signature"].as_str() {
+                        println!("  {}", sig);
+                    }
+                    println!();
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// List files with optional symbol counts
+fn cmd_files(pattern: Option<String>, with_symbols: bool, json: bool) -> Result<()> {
+    let repo = Repo::discover()?;
+
+    let glob_pattern = pattern.unwrap_or_else(|| "**/*".to_string());
+    let full_pattern = format!("{}/{}", repo.root().display(), glob_pattern);
+
+    let mut files = Vec::new();
+
+    if let Ok(entries) = glob::glob(&full_pattern) {
+        for entry in entries.flatten() {
+            if entry.is_file() && !entry.to_string_lossy().contains(".jj") && !entry.to_string_lossy().contains(".git") {
+                let rel_path = entry.strip_prefix(repo.root()).unwrap_or(&entry);
+                let ext = entry.extension().map(|e| e.to_string_lossy().to_string());
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+
+                let mut file_info = serde_json::json!({
+                    "path": rel_path.display().to_string(),
+                    "extension": ext,
+                    "size": size,
+                });
+
+                if with_symbols {
+                    if let Some(lang) = agentjj::SupportedLanguage::from_path(&entry) {
+                        if let Ok(content) = std::fs::read_to_string(&entry) {
+                            if let Ok(symbols) = agentjj::symbols::extract_symbols(&content, lang) {
+                                file_info["symbol_count"] = serde_json::json!(symbols.len());
+                                file_info["symbols"] = serde_json::json!(
+                                    symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+                                );
+                            }
+                        }
+                    }
+                }
+
+                files.push(file_info);
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "pattern": glob_pattern,
+            "files": files,
+            "count": files.len(),
+        }))?);
+    } else {
+        println!("Files matching '{}':", glob_pattern);
+        for f in &files {
+            let size_str = format_size(f["size"].as_u64().unwrap_or(0));
+            if with_symbols {
+                if let Some(count) = f["symbol_count"].as_u64() {
+                    println!("  {} ({}, {} symbols)", f["path"], size_str, count);
+                } else {
+                    println!("  {} ({})", f["path"], size_str);
+                }
+            } else {
+                println!("  {} ({})", f["path"], size_str);
+            }
+        }
+        println!("\nTotal: {} files", files.len());
+    }
+
+    Ok(())
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+/// Show semantic diff
+fn cmd_diff(against: Option<String>, explain: bool, json: bool) -> Result<()> {
+    let repo = Repo::discover()?;
+    let target = against.unwrap_or_else(|| "@-".to_string());
+
+    // Get the diff
+    let diff_output = std::process::Command::new("jj")
+        .current_dir(repo.root())
+        .args(["diff", "-r", &target])
+        .output()?;
+
+    if !diff_output.status.success() {
+        let stderr = String::from_utf8_lossy(&diff_output.stderr);
+        anyhow::bail!("Diff failed: {}", stderr);
+    }
+
+    let raw_diff = String::from_utf8_lossy(&diff_output.stdout).to_string();
+
+    // Parse diff into structured format
+    let mut files_changed = Vec::new();
+    let mut current_file: Option<String> = None;
+    let mut additions = 0;
+    let mut deletions = 0;
+
+    for line in raw_diff.lines() {
+        if line.starts_with("--- ") || line.starts_with("+++ ") {
+            let path = line[4..].trim_start_matches("a/").trim_start_matches("b/");
+            if !path.is_empty() && path != "/dev/null" {
+                current_file = Some(path.to_string());
+            }
+        } else if line.starts_with('+') && !line.starts_with("+++") {
+            additions += 1;
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            deletions += 1;
+        }
+
+        if let Some(ref file) = current_file {
+            if !files_changed.contains(file) {
+                files_changed.push(file.clone());
+            }
+        }
+    }
+
+    let semantic_summary = if explain && !files_changed.is_empty() {
+        // Generate a semantic summary based on file types and changes
+        let mut summary_parts = Vec::new();
+
+        for file in &files_changed {
+            let ext = std::path::Path::new(file)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+
+            let file_type = match ext {
+                "rs" => "Rust code",
+                "py" => "Python code",
+                "ts" | "tsx" => "TypeScript code",
+                "js" | "jsx" => "JavaScript code",
+                "toml" => "TOML configuration",
+                "json" => "JSON data",
+                "md" => "documentation",
+                "yaml" | "yml" => "YAML configuration",
+                _ => "file",
+            };
+
+            summary_parts.push(format!("{} ({})", file, file_type));
+        }
+
+        Some(format!(
+            "Changes affect {} file(s): {}. Net change: +{} -{} lines.",
+            files_changed.len(),
+            summary_parts.join(", "),
+            additions,
+            deletions
+        ))
+    } else {
+        None
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "against": target,
+            "files_changed": files_changed,
+            "stats": {
+                "additions": additions,
+                "deletions": deletions,
+                "net": additions as i64 - deletions as i64,
+            },
+            "explanation": semantic_summary,
+            "raw_diff": raw_diff,
+        }))?);
+    } else {
+        println!("Diff against {}:", target);
+        println!("  {} file(s) changed", files_changed.len());
+        println!("  +{} -{} lines", additions, deletions);
+
+        if let Some(summary) = &semantic_summary {
+            println!("\nSummary: {}", summary);
+        }
+
+        println!("\n{}", raw_diff);
+    }
+
+    Ok(())
+}
+
+/// Analyze what would be affected by changing a symbol
+fn cmd_affected(symbol_path: String, depth: usize, json: bool) -> Result<()> {
+    let repo = Repo::discover()?;
+
+    // Parse the symbol path
+    let (file_path, symbol_name) = if let Some(idx) = symbol_path.find("::") {
+        (&symbol_path[..idx], &symbol_path[idx + 2..])
+    } else {
+        anyhow::bail!("Symbol path must be file::symbol_name");
+    };
+
+    // Find all files that might reference this symbol
+    let mut affected_files = Vec::new();
+    let pattern = format!("{}/**/*", repo.root().display());
+
+    if let Ok(entries) = glob::glob(&pattern) {
+        for entry in entries.flatten() {
+            if entry.is_file() {
+                if let Some(lang) = agentjj::SupportedLanguage::from_path(&entry) {
+                    if let Ok(content) = std::fs::read_to_string(&entry) {
+                        // Simple text search for the symbol name
+                        if content.contains(symbol_name) {
+                            let rel_path = entry.strip_prefix(repo.root()).unwrap_or(&entry);
+
+                            // Count occurrences
+                            let occurrences = content.matches(symbol_name).count();
+
+                            // Try to find actual usages (not just the definition)
+                            let is_definition = rel_path.to_string_lossy() == file_path;
+
+                            if !is_definition || depth > 0 {
+                                affected_files.push(serde_json::json!({
+                                    "path": rel_path.display().to_string(),
+                                    "language": format!("{:?}", lang),
+                                    "occurrences": occurrences,
+                                    "is_definition": is_definition,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort by occurrences (most affected first)
+    affected_files.sort_by(|a, b| {
+        b["occurrences"].as_u64().unwrap_or(0)
+            .cmp(&a["occurrences"].as_u64().unwrap_or(0))
+    });
+
+    let analysis = serde_json::json!({
+        "symbol": symbol_path,
+        "depth": depth,
+        "affected_files": affected_files,
+        "total_files": affected_files.len(),
+        "risk_assessment": if affected_files.len() > 10 {
+            "high"
+        } else if affected_files.len() > 3 {
+            "medium"
+        } else {
+            "low"
+        },
+        "recommendation": if affected_files.len() > 10 {
+            "Consider creating a deprecation path or using feature flags"
+        } else if affected_files.len() > 3 {
+            "Run tests after change, review affected files"
+        } else {
+            "Safe to modify with standard review"
+        },
+    });
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&analysis)?);
+    } else {
+        println!("Impact analysis for '{}':", symbol_path);
+        println!("  Risk: {}", analysis["risk_assessment"]);
+        println!("  {} file(s) affected", affected_files.len());
+        println!();
+
+        for f in affected_files.iter().take(10) {
+            let marker = if f["is_definition"].as_bool().unwrap_or(false) { "(def)" } else { "" };
+            println!("  {} ({} refs) {}", f["path"], f["occurrences"], marker);
+        }
+
+        if affected_files.len() > 10 {
+            println!("  ... and {} more", affected_files.len() - 10);
+        }
+
+        println!("\n{}", analysis["recommendation"]);
+    }
+
+    Ok(())
+}
+
+/// Print JSON schemas for output types
+fn cmd_schema(type_filter: Option<String>, json: bool) -> Result<()> {
+    let schemas = serde_json::json!({
+        "status": {
+            "type": "object",
+            "properties": {
+                "change_id": { "type": "string", "description": "Current jj change ID" },
+                "operation_id": { "type": "string", "description": "Current jj operation ID" },
+                "files_changed": { "type": "array", "items": { "type": "string" } },
+                "has_manifest": { "type": "boolean" },
+                "typed_change": { "type": "object", "nullable": true },
+            }
+        },
+        "symbol": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "kind": { "type": "string", "enum": ["function", "method", "class", "struct", "enum", "interface", "constant", "variable", "module", "import"] },
+                "signature": { "type": "string", "nullable": true },
+                "docstring": { "type": "string", "nullable": true },
+                "start_line": { "type": "integer" },
+                "end_line": { "type": "integer" },
+            }
+        },
+        "context": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "kind": { "type": "string" },
+                "signature": { "type": "string", "nullable": true },
+                "docstring": { "type": "string", "nullable": true },
+                "imports_needed": { "type": "array", "items": { "type": "string" } },
+            }
+        },
+        "apply_result": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "status": { "const": "success" },
+                        "change_id": { "type": "string" },
+                        "files_changed": { "type": "array" },
+                    }
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "status": { "const": "precondition_failed" },
+                        "reason": { "type": "string" },
+                        "expected": { "type": "string" },
+                        "actual": { "type": "string" },
+                    }
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "status": { "const": "conflict" },
+                        "conflicts": { "type": "array" },
+                    }
+                }
+            ]
+        },
+        "error": {
+            "type": "object",
+            "properties": {
+                "error": { "const": true },
+                "message": { "type": "string" },
+            }
+        },
+        "orient": {
+            "type": "object",
+            "description": "Complete repository orientation for agents",
+            "properties": {
+                "current_state": { "type": "object" },
+                "repository": { "type": "object", "nullable": true },
+                "codebase": { "type": "object" },
+                "recent_changes": { "type": "array" },
+                "capabilities": { "type": "object" },
+                "quick_start": { "type": "object" },
+            }
+        },
+    });
+
+    if let Some(type_name) = type_filter {
+        if let Some(schema) = schemas.get(&type_name) {
+            if json {
+                println!("{}", serde_json::to_string_pretty(schema)?);
+            } else {
+                println!("Schema for '{}':", type_name);
+                println!("{}", serde_json::to_string_pretty(schema)?);
+            }
+        } else {
+            anyhow::bail!("Unknown type: {}. Available: status, symbol, context, apply_result, error, orient", type_name);
+        }
+    } else {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&schemas)?);
+        } else {
+            println!("Available schemas:");
+            for key in schemas.as_object().unwrap().keys() {
+                println!("  {}", key);
+            }
+            println!("\nUse --type <name> to see a specific schema");
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate current changes are complete
+fn cmd_validate(json: bool) -> Result<()> {
+    let mut repo = Repo::discover()?;
+
+    let change_id = repo.current_change_id()?;
+    let files = repo.changed_files(&change_id)?;
+
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+
+    // Check if there are any changes
+    if files.is_empty() {
+        issues.push("No changes to validate".to_string());
+    }
+
+    // Check for typed change metadata
+    let typed_change = repo.get_typed_change(&change_id).ok();
+    if typed_change.is_none() {
+        warnings.push("No typed change metadata - consider using 'agentjj change set'".to_string());
+    }
+
+    // Check manifest exists
+    if !repo.has_manifest() {
+        warnings.push("No manifest found - consider using 'agentjj init'".to_string());
+    }
+
+    // Check for common issues in changed files
+    for file in &files {
+        let path = std::path::Path::new(file);
+
+        // Check for test files if code was changed
+        if path.extension().map(|e| e == "rs" || e == "py" || e == "ts" || e == "js").unwrap_or(false) {
+            let is_test = file.contains("test") || file.contains("spec") || file.contains("_test.") || file.contains(".test.");
+            if !is_test {
+                // For Rust files, tests are often inline (mod tests) - skip warning
+                // For other languages, check common test locations
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if ext != "rs" {
+                    let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+
+                    // Check common test locations
+                    let test_patterns = [
+                        format!("tests/{}.{}", file_stem, ext),
+                        format!("test/{}.{}", file_stem, ext),
+                        format!("tests/test_{}.{}", file_stem, ext),
+                        format!("{}_test.{}", file_stem, ext),
+                        format!("{}.test.{}", file_stem, ext),
+                        format!("{}.spec.{}", file_stem, ext),
+                    ];
+
+                    let has_test = test_patterns.iter().any(|p| repo.root().join(p).exists());
+                    if !has_test {
+                        warnings.push(format!("Consider adding tests for {}", file));
+                    }
+                }
+            }
+        }
+    }
+
+    // Check invariants from manifest
+    if let Ok(manifest) = repo.manifest() {
+        if !manifest.invariants.is_empty() {
+            warnings.push(format!(
+                "{} invariant(s) defined - run tests manually to verify",
+                manifest.invariants.len()
+            ));
+        }
+    }
+
+    let is_valid = issues.is_empty();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "valid": is_valid,
+            "change_id": change_id,
+            "files_changed": files,
+            "typed_change": typed_change,
+            "issues": issues,
+            "warnings": warnings,
+        }))?);
+    } else {
+        if is_valid {
+            println!("✓ Changes are valid");
+        } else {
+            println!("✗ Validation failed");
+        }
+
+        println!("  {} file(s) changed", files.len());
+
+        if !issues.is_empty() {
+            println!("\nIssues:");
+            for issue in &issues {
+                println!("  ✗ {}", issue);
+            }
+        }
+
+        if !warnings.is_empty() {
+            println!("\nWarnings:");
+            for warning in &warnings {
+                println!("  ⚠ {}", warning);
+            }
+        }
+
+        if is_valid && warnings.is_empty() {
+            println!("\nReady to push!");
+        }
+    }
+
+    if !is_valid {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Output the repository DAG in various formats
+fn cmd_graph(format: String, limit: usize, all: bool, json: bool) -> Result<()> {
+    let mut repo = Repo::discover()?;
+
+    match format.to_lowercase().as_str() {
+        "ascii" => cmd_graph_ascii(&mut repo, limit, all, json),
+        "mermaid" => cmd_graph_mermaid(&mut repo, limit, all, json),
+        "dot" => cmd_graph_dot(&mut repo, limit, all, json),
+        _ => anyhow::bail!("Unknown format: {}. Use 'ascii', 'mermaid', or 'dot'", format),
+    }
+}
+
+/// Graph node representation for structured output
+#[derive(Clone)]
+struct GraphNode {
+    id: String,
+    description: String,
+    parents: Vec<String>,
+}
+
+/// Get structured graph nodes using Repo.log_entries()
+fn get_graph_nodes(repo: &mut Repo, limit: usize, all: bool) -> Result<Vec<GraphNode>> {
+    let entries = repo.log_entries(limit, all)?;
+
+    let nodes = entries
+        .into_iter()
+        .map(|entry| GraphNode {
+            id: entry.change_id,
+            description: entry.description,
+            parents: entry.parent_change_ids,
+        })
+        .collect();
+
+    Ok(nodes)
+}
+
+/// ASCII format: pass through jj log output
+fn cmd_graph_ascii(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result<()> {
+    let ascii_output = repo.log_ascii(limit, all)?;
+
+    if json {
+        // For JSON mode, also get structured nodes
+        let nodes = get_graph_nodes(repo, limit, all).unwrap_or_default();
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "format": "ascii",
+            "diagram": ascii_output,
+            "nodes": nodes.iter().map(|n| serde_json::json!({
+                "id": n.id,
+                "description": n.description,
+                "parents": n.parents,
+            })).collect::<Vec<_>>(),
+        }))?);
+    } else {
+        print!("{}", ascii_output);
+    }
+
+    Ok(())
+}
+
+/// Mermaid format: generate flowchart from jj log
+fn cmd_graph_mermaid(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result<()> {
+    let nodes = get_graph_nodes(repo, limit, all)?;
+
+    // Build Mermaid flowchart
+    let mut diagram = String::from("flowchart TD\n");
+
+    for node in &nodes {
+        // Escape quotes in description and truncate
+        let desc = node.description
+            .replace('"', "'")
+            .replace('\n', " ");
+        let truncated_desc = if desc.len() > 40 {
+            format!("{}...", &desc[..37])
+        } else {
+            desc.clone()
+        };
+
+        // Node definition with short ID
+        diagram.push_str(&format!("  {}[\"{}\"]\n", node.id, truncated_desc));
+
+        // Edges to parents
+        for parent_id in &node.parents {
+            diagram.push_str(&format!("  {} --> {}\n", node.id, parent_id));
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "format": "mermaid",
+            "diagram": diagram,
+            "nodes": nodes.iter().map(|n| serde_json::json!({
+                "id": n.id,
+                "description": n.description,
+                "parents": n.parents,
+            })).collect::<Vec<_>>(),
+        }))?);
+    } else {
+        print!("{}", diagram);
+    }
+
+    Ok(())
+}
+
+/// DOT format: generate Graphviz output from jj log
+fn cmd_graph_dot(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result<()> {
+    let nodes = get_graph_nodes(repo, limit, all)?;
+
+    // Build DOT graph
+    let mut diagram = String::from("digraph G {\n");
+    diagram.push_str("  rankdir=BT;\n");
+    diagram.push_str("  node [shape=box, style=rounded];\n\n");
+
+    for node in &nodes {
+        // Escape quotes in description and truncate
+        let desc = node.description
+            .replace('"', "\\\"")
+            .replace('\n', "\\n");
+        let truncated_desc = if desc.len() > 40 {
+            format!("{}...", &desc[..37])
+        } else {
+            desc.clone()
+        };
+
+        // Node definition
+        diagram.push_str(&format!("  \"{}\" [label=\"{}\\n{}\"];\n", node.id, node.id, truncated_desc));
+
+        // Edges to parents
+        for parent_id in &node.parents {
+            diagram.push_str(&format!("  \"{}\" -> \"{}\";\n", node.id, parent_id));
+        }
+    }
+
+    diagram.push_str("}\n");
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "format": "dot",
+            "diagram": diagram,
+            "nodes": nodes.iter().map(|n| serde_json::json!({
+                "id": n.id,
+                "description": n.description,
+                "parents": n.parents,
+            })).collect::<Vec<_>>(),
+        }))?);
+    } else {
+        print!("{}", diagram);
+    }
+
+    Ok(())
+}
+
+/// Suggest next actions
+fn cmd_suggest(json: bool) -> Result<()> {
+    let mut repo = Repo::discover()?;
+
+    let change_id = repo.current_change_id()?;
+    let files = repo.changed_files(&change_id)?;
+    let has_manifest = repo.has_manifest();
+    let typed_change = repo.get_typed_change(&change_id).ok();
+
+    let mut suggestions = Vec::new();
+
+    // Based on current state, suggest actions
+    if !has_manifest {
+        suggestions.push(serde_json::json!({
+            "action": "init",
+            "command": "agentjj init",
+            "reason": "No manifest found - initialize to enable full features",
+            "priority": "high",
+        }));
+    }
+
+    if files.is_empty() {
+        suggestions.push(serde_json::json!({
+            "action": "orient",
+            "command": "agentjj orient",
+            "reason": "No uncommitted changes - explore the codebase",
+            "priority": "medium",
+        }));
+    } else {
+        // Have changes
+        if typed_change.is_none() {
+            suggestions.push(serde_json::json!({
+                "action": "set_change",
+                "command": format!("agentjj change set -i 'describe your change' -t behavioral"),
+                "reason": "Add typed change metadata for better tracking",
+                "priority": "high",
+            }));
+        }
+
+        suggestions.push(serde_json::json!({
+            "action": "validate",
+            "command": "agentjj validate",
+            "reason": "Check if changes are ready to push",
+            "priority": "high",
+        }));
+
+        suggestions.push(serde_json::json!({
+            "action": "checkpoint",
+            "command": "agentjj checkpoint work-in-progress",
+            "reason": "Save a restore point before continuing",
+            "priority": "medium",
+        }));
+
+        suggestions.push(serde_json::json!({
+            "action": "diff",
+            "command": "agentjj diff --explain",
+            "reason": "Review your changes with semantic summary",
+            "priority": "medium",
+        }));
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "current_state": {
+                "change_id": &change_id[..12.min(change_id.len())],
+                "files_changed": files.len(),
+                "has_manifest": has_manifest,
+                "has_typed_change": typed_change.is_some(),
+            },
+            "suggestions": suggestions,
+        }))?);
+    } else {
+        println!("=== Suggested Actions ===\n");
+
+        for (i, s) in suggestions.iter().enumerate() {
+            let priority = s["priority"].as_str().unwrap_or("medium");
+            let marker = match priority {
+                "high" => "!",
+                _ => "-",
+            };
+            println!("{}. [{}] {}", i + 1, marker, s["reason"]);
+            println!("   $ {}", s["command"]);
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentjj::symbols::{Symbol, SymbolKind};
+    use agentjj::SupportedLanguage;
+    use regex::Regex;
+
+    #[test]
+    fn test_chrono_lite_now_returns_valid_iso8601() {
+        let timestamp = chrono_lite_now();
+        let iso8601_regex = Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$").unwrap();
+        assert!(
+            iso8601_regex.is_match(&timestamp),
+            "Expected ISO 8601 format, got: {}",
+            timestamp
+        );
+    }
+
+    #[test]
+    fn test_is_leap_year_divisible_by_400() {
+        assert!(is_leap_year(2000), "2000 should be a leap year (divisible by 400)");
+    }
+
+    #[test]
+    fn test_is_leap_year_not_divisible_by_400_but_by_100() {
+        assert!(!is_leap_year(1900), "1900 should not be a leap year (divisible by 100 but not 400)");
+    }
+
+    #[test]
+    fn test_is_leap_year_divisible_by_4() {
+        assert!(is_leap_year(2024), "2024 should be a leap year (divisible by 4)");
+    }
+
+    #[test]
+    fn test_is_leap_year_not_divisible_by_4() {
+        assert!(!is_leap_year(2023), "2023 should not be a leap year");
+    }
+
+    #[test]
+    fn test_parse_change_type_behavioral() {
+        assert!(matches!(parse_change_type("behavioral").unwrap(), ChangeType::Behavioral));
+        assert!(matches!(parse_change_type("behavior").unwrap(), ChangeType::Behavioral));
+        assert!(matches!(parse_change_type("BEHAVIORAL").unwrap(), ChangeType::Behavioral));
+    }
+
+    #[test]
+    fn test_parse_change_type_refactor() {
+        assert!(matches!(parse_change_type("refactor").unwrap(), ChangeType::Refactor));
+    }
+
+    #[test]
+    fn test_parse_change_type_schema() {
+        assert!(matches!(parse_change_type("schema").unwrap(), ChangeType::Schema));
+    }
+
+    #[test]
+    fn test_parse_change_type_docs() {
+        assert!(matches!(parse_change_type("docs").unwrap(), ChangeType::Docs));
+        assert!(matches!(parse_change_type("doc").unwrap(), ChangeType::Docs));
+    }
+
+    #[test]
+    fn test_parse_change_type_deps() {
+        assert!(matches!(parse_change_type("deps").unwrap(), ChangeType::Deps));
+        assert!(matches!(parse_change_type("dependency").unwrap(), ChangeType::Deps));
+        assert!(matches!(parse_change_type("dependencies").unwrap(), ChangeType::Deps));
+    }
+
+    #[test]
+    fn test_parse_change_type_config() {
+        assert!(matches!(parse_change_type("config").unwrap(), ChangeType::Config));
+        assert!(matches!(parse_change_type("configuration").unwrap(), ChangeType::Config));
+    }
+
+    #[test]
+    fn test_parse_change_type_test() {
+        assert!(matches!(parse_change_type("test").unwrap(), ChangeType::Test));
+        assert!(matches!(parse_change_type("tests").unwrap(), ChangeType::Test));
+    }
+
+    #[test]
+    fn test_parse_change_type_invalid() {
+        assert!(parse_change_type("invalid").is_err());
+        assert!(parse_change_type("unknown").is_err());
+        assert!(parse_change_type("").is_err());
+    }
+
+    #[test]
+    fn test_parse_category_feature() {
+        assert!(matches!(parse_category("feature").unwrap(), ChangeCategory::Feature));
+        assert!(matches!(parse_category("feat").unwrap(), ChangeCategory::Feature));
+    }
+
+    #[test]
+    fn test_parse_category_fix() {
+        assert!(matches!(parse_category("fix").unwrap(), ChangeCategory::Fix));
+        assert!(matches!(parse_category("bugfix").unwrap(), ChangeCategory::Fix));
+    }
+
+    #[test]
+    fn test_parse_category_perf() {
+        assert!(matches!(parse_category("perf").unwrap(), ChangeCategory::Perf));
+        assert!(matches!(parse_category("performance").unwrap(), ChangeCategory::Perf));
+    }
+
+    #[test]
+    fn test_parse_category_security() {
+        assert!(matches!(parse_category("security").unwrap(), ChangeCategory::Security));
+        assert!(matches!(parse_category("sec").unwrap(), ChangeCategory::Security));
+    }
+
+    #[test]
+    fn test_parse_category_breaking() {
+        assert!(matches!(parse_category("breaking").unwrap(), ChangeCategory::Breaking));
+    }
+
+    #[test]
+    fn test_parse_category_deprecation() {
+        assert!(matches!(parse_category("deprecation").unwrap(), ChangeCategory::Deprecation));
+        assert!(matches!(parse_category("deprecate").unwrap(), ChangeCategory::Deprecation));
+    }
+
+    #[test]
+    fn test_parse_category_chore() {
+        assert!(matches!(parse_category("chore").unwrap(), ChangeCategory::Chore));
+    }
+
+    #[test]
+    fn test_parse_category_invalid() {
+        assert!(parse_category("invalid").is_err());
+        assert!(parse_category("unknown").is_err());
+        assert!(parse_category("").is_err());
+    }
+
+    fn make_symbol(name: &str, signature: Option<&str>) -> Symbol {
+        Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Function,
+            signature: signature.map(|s| s.to_string()),
+            docstring: None,
+            start_line: 1,
+            end_line: 10,
+            children: vec![],
+        }
+    }
+
+    #[test]
+    fn test_is_public_symbol_rust_pub() {
+        let symbol = make_symbol("foo", Some("pub fn foo()"));
+        assert!(is_public_symbol(&symbol, SupportedLanguage::Rust));
+    }
+
+    #[test]
+    fn test_is_public_symbol_rust_private() {
+        let symbol = make_symbol("bar", Some("fn bar()"));
+        assert!(!is_public_symbol(&symbol, SupportedLanguage::Rust));
+    }
+
+    #[test]
+    fn test_is_public_symbol_rust_no_signature() {
+        let symbol = make_symbol("baz", None);
+        assert!(!is_public_symbol(&symbol, SupportedLanguage::Rust));
+    }
+
+    #[test]
+    fn test_is_public_symbol_python_public() {
+        let symbol = make_symbol("my_func", Some("def my_func():"));
+        assert!(is_public_symbol(&symbol, SupportedLanguage::Python));
+    }
+
+    #[test]
+    fn test_is_public_symbol_python_private() {
+        let symbol = make_symbol("_private", Some("def _private():"));
+        assert!(!is_public_symbol(&symbol, SupportedLanguage::Python));
+    }
+
+    #[test]
+    fn test_is_public_symbol_python_dunder() {
+        let symbol = make_symbol("__init__", Some("def __init__(self):"));
+        assert!(!is_public_symbol(&symbol, SupportedLanguage::Python));
+    }
+
+    #[test]
+    fn test_is_public_symbol_js_export() {
+        let symbol = make_symbol("myFunc", Some("export function myFunc()"));
+        assert!(is_public_symbol(&symbol, SupportedLanguage::JavaScript));
+    }
+
+    #[test]
+    fn test_is_public_symbol_js_no_export() {
+        let symbol = make_symbol("myFunc", Some("function myFunc()"));
+        assert!(!is_public_symbol(&symbol, SupportedLanguage::JavaScript));
+    }
+
+    #[test]
+    fn test_is_public_symbol_ts_export() {
+        let symbol = make_symbol("myFunc", Some("export function myFunc(): void"));
+        assert!(is_public_symbol(&symbol, SupportedLanguage::TypeScript));
+    }
+
+    #[test]
+    fn test_is_public_symbol_ts_no_signature_defaults_to_public() {
+        let symbol = make_symbol("myFunc", None);
+        assert!(is_public_symbol(&symbol, SupportedLanguage::TypeScript));
+    }
 }

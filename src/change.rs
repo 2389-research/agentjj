@@ -233,6 +233,11 @@ impl ChangeIndex {
         self.changes.values().filter(|c| c.breaking).collect()
     }
 
+    /// Get all changes
+    pub fn all(&self) -> Vec<&TypedChange> {
+        self.changes.values().collect()
+    }
+
     /// Insert a change
     pub fn insert(&mut self, change: TypedChange) {
         self.changes.insert(change.change_id.clone(), change);

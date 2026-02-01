@@ -1,0 +1,7 @@
+{
+  "change_id": "1eeb44fd13a8d62b336ff23114c6e2c3",
+  "created_at": "2026-02-01T18:00:50Z",
+  "description": "Before pushing embedded jj-lib and auto-colocate",
+  "name": "pre-push",
+  "operation_id": "a9bf75e7c6932be2c7219650ffffa552564d343d1102a5a082c96a3c51a43b17eb26e97111ea3a92c925c75e62b71c9449203f632d2fd341e95f5b2d0ff7267a"
+}
