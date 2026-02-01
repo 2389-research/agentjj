@@ -3,1000 +3,303 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>agentjj - the version control for agents</title>
-    <meta name="description" content="Agent-first version control. A porcelain for Jujutsu designed to make AI agents love source control.">
+    <title>agentjj - version control for agents</title>
+    <meta name="description" content="Agent-first version control. A porcelain for Jujutsu designed for AI agents.">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
         :root {
-            --void: #0c0c0c;
-            --panel: #141414;
-            --surface: #1a1a1a;
-            --elevated: #242424;
-            --border: #2a2a2a;
-            --border-bright: #3a3a3a;
-            --text: #e8e8e8;
-            --text-dim: #888;
-            --text-muted: #555;
-            --phosphor: #39ff14;
-            --phosphor-dim: #1a7a0a;
-            --phosphor-glow: rgba(57, 255, 20, 0.15);
-            --amber: #ffb800;
-            --cyan: #00d4ff;
-            --mono: 'JetBrains Mono', monospace;
-            --sans: 'Space Grotesk', sans-serif;
+            --bg: #fdfcfb;
+            --bg-warm: #f8f6f3;
+            --text: #1a1a1a;
+            --text-soft: #4a4a4a;
+            --text-muted: #8a8a8a;
+            --border: #e5e2dd;
+            --accent: #2d5a4a;
+            --mono: 'DM Mono', monospace;
+            --sans: 'DM Sans', sans-serif;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        html {
-            scroll-behavior: smooth;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: var(--mono);
-            background: var(--void);
+            background: var(--bg);
             color: var(--text);
             line-height: 1.6;
             -webkit-font-smoothing: antialiased;
-            min-height: 100vh;
         }
 
-        /* Scanline overlay */
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: repeating-linear-gradient(
-                0deg,
-                transparent,
-                transparent 2px,
-                rgba(0, 0, 0, 0.03) 2px,
-                rgba(0, 0, 0, 0.03) 4px
-            );
-            pointer-events: none;
-            z-index: 1000;
-        }
+        a { color: var(--accent); }
 
-        /* Noise texture */
-        body::after {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-            opacity: 0.02;
-            pointer-events: none;
-            z-index: 999;
-        }
-
-        a {
-            color: inherit;
-            text-decoration: none;
-        }
-
-        /* Navigation */
         nav {
-            position: sticky;
-            top: 0;
-            z-index: 100;
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 1rem 2rem;
-            background: rgba(12, 12, 12, 0.95);
-            backdrop-filter: blur(10px);
             border-bottom: 1px solid var(--border);
-        }
-
-        .nav-logo {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            font-weight: 600;
-            font-size: 1.1rem;
-            letter-spacing: -0.02em;
-        }
-
-        .logo-glyph {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            background: var(--phosphor);
-            color: var(--void);
-            font-weight: 700;
             font-size: 0.9rem;
-            border-radius: 6px;
-            box-shadow: 0 0 20px var(--phosphor-glow);
         }
 
-        .beta-tag {
-            font-size: 0.6rem;
-            font-weight: 600;
-            color: var(--void);
-            background: var(--amber);
-            padding: 0.15rem 0.4rem;
-            border-radius: 3px;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
+        .logo {
+            font-weight: 500;
+            color: var(--text);
+            text-decoration: none;
         }
 
         .nav-links {
             display: flex;
-            gap: 2rem;
-            font-size: 0.8rem;
-            color: var(--text-dim);
+            gap: 1.5rem;
         }
 
         .nav-links a {
-            transition: color 0.2s;
+            color: var(--text-soft);
+            text-decoration: none;
         }
 
-        .nav-links a:hover {
-            color: var(--phosphor);
-        }
+        .nav-links a:hover { color: var(--text); }
 
-        /* Hero */
-        .hero {
-            position: relative;
-            text-align: center;
-            padding: 6rem 2rem 4rem;
-            border-bottom: 1px solid var(--border);
-            overflow: hidden;
-        }
-
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, var(--phosphor-glow) 0%, transparent 70%);
-            pointer-events: none;
-        }
-
-        .hero-grid {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-image:
-                linear-gradient(var(--border) 1px, transparent 1px),
-                linear-gradient(90deg, var(--border) 1px, transparent 1px);
-            background-size: 60px 60px;
-            opacity: 0.3;
-            mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
-            -webkit-mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
-        }
-
-        .status-line {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.4rem 1rem;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 100px;
-            font-size: 0.7rem;
-            color: var(--text-dim);
-            margin-bottom: 2rem;
-            animation: fadeSlideIn 0.6s ease-out;
-        }
-
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            background: var(--phosphor);
-            border-radius: 50%;
-            box-shadow: 0 0 8px var(--phosphor);
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.6; transform: scale(0.9); }
-        }
-
-        @keyframes fadeSlideIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .hero-logo {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 120px;
-            height: 120px;
-            margin-bottom: 1.5rem;
-            animation: fadeSlideIn 0.6s ease-out 0.1s backwards;
-        }
-
-        .hero-logo svg {
-            width: 80px;
-            height: 80px;
-            stroke: var(--phosphor);
-            fill: none;
-            filter: drop-shadow(0 0 20px var(--phosphor-glow));
-        }
-
-        .hero-logo::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            border: 2px solid var(--border);
-            border-radius: 24px;
-            animation: borderPulse 3s ease-in-out infinite;
-        }
-
-        @keyframes borderPulse {
-            0%, 100% { border-color: var(--border); }
-            50% { border-color: var(--phosphor-dim); }
-        }
-
-        .hero h1 {
-            font-family: var(--sans);
-            font-size: clamp(1.5rem, 4vw, 2rem);
-            font-weight: 600;
-            margin-bottom: 0.75rem;
-            letter-spacing: -0.03em;
-            animation: fadeSlideIn 0.6s ease-out 0.2s backwards;
-        }
-
-        .hero h1 span {
-            color: var(--phosphor);
-        }
-
-        .hero-tagline {
-            font-size: 0.9rem;
-            color: var(--text-dim);
-            max-width: 420px;
-            margin: 0 auto 2.5rem;
-            animation: fadeSlideIn 0.6s ease-out 0.3s backwards;
-        }
-
-        /* CTA Buttons */
-        .cta-group {
-            display: flex;
-            justify-content: center;
-            gap: 1rem;
-            flex-wrap: wrap;
-            animation: fadeSlideIn 0.6s ease-out 0.4s backwards;
-        }
-
-        .cta-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.6rem;
-            padding: 0.9rem 1.8rem;
-            font-family: var(--mono);
-            font-size: 0.85rem;
-            font-weight: 500;
-            border-radius: 8px;
-            border: 1px solid var(--border-bright);
-            background: var(--surface);
-            color: var(--text);
-            cursor: pointer;
-            transition: all 0.25s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .cta-btn::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
-            transition: left 0.5s ease;
-        }
-
-        .cta-btn:hover::before {
-            left: 100%;
-        }
-
-        .cta-btn:hover {
-            border-color: var(--phosphor-dim);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-        }
-
-        .cta-btn.primary {
-            background: var(--phosphor);
-            border-color: var(--phosphor);
-            color: var(--void);
-            font-weight: 600;
-            box-shadow: 0 0 30px var(--phosphor-glow);
-        }
-
-        .cta-btn.primary:hover {
-            background: #45ff26;
-            border-color: #45ff26;
-            box-shadow: 0 0 40px rgba(57, 255, 20, 0.3);
-        }
-
-        .cta-icon {
-            font-size: 1.1rem;
-        }
-
-        /* Stats Bar */
-        .stats-bar {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            border-bottom: 1px solid var(--border);
-            background: var(--panel);
-        }
-
-        .stat {
-            padding: 1.5rem 1rem;
-            text-align: center;
-            border-right: 1px solid var(--border);
-            position: relative;
-        }
-
-        .stat:last-child {
-            border-right: none;
-        }
-
-        .stat-value {
-            font-family: var(--sans);
-            font-size: 1.8rem;
-            font-weight: 700;
-            color: var(--phosphor);
-            line-height: 1;
-            margin-bottom: 0.3rem;
-        }
-
-        .stat-label {
-            font-size: 0.65rem;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-        }
-
-        /* Content */
-        .content {
-            max-width: 860px;
+        main {
+            max-width: 700px;
             margin: 0 auto;
             padding: 3rem 2rem;
         }
 
-        .section {
-            margin-bottom: 4rem;
-        }
-
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.25rem;
-            padding-bottom: 0.75rem;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .section-title {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-dim);
-        }
-
-        .section-title .icon {
-            font-size: 1rem;
-        }
-
-        .section-link {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            transition: color 0.2s;
-        }
-
-        .section-link:hover {
-            color: var(--phosphor);
-        }
-
-        /* Audience Panels */
-        .audience-panel {
-            background: var(--panel);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow: hidden;
-            transition: border-color 0.3s;
-        }
-
-        .audience-panel:hover {
-            border-color: var(--border-bright);
-        }
-
-        .panel-header {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 1.25rem 1.5rem;
-            background: var(--surface);
-            border-bottom: 1px solid var(--border);
-        }
-
-        .panel-icon {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 36px;
-            height: 36px;
-            background: var(--elevated);
-            border-radius: 8px;
-            font-size: 1.2rem;
-        }
-
-        .panel-title {
+        h1 {
             font-family: var(--sans);
-            font-size: 1rem;
+            font-size: 1.4rem;
             font-weight: 600;
+            margin-bottom: 0.5rem;
         }
 
-        .panel-body {
-            padding: 1.5rem;
+        .tagline {
+            color: var(--text-soft);
+            font-size: 0.9rem;
+            margin-bottom: 2rem;
         }
 
-        .panel-desc {
-            font-size: 0.85rem;
-            color: var(--text-dim);
-            margin-bottom: 1.25rem;
-            line-height: 1.7;
-        }
-
-        /* Terminal Block */
-        .terminal {
-            background: var(--void);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-
-        .terminal-header {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.6rem 1rem;
-            background: var(--surface);
-            border-bottom: 1px solid var(--border);
-        }
-
-        .terminal-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: var(--elevated);
-        }
-
-        .terminal-dot.red { background: #ff5f57; }
-        .terminal-dot.yellow { background: #febc2e; }
-        .terminal-dot.green { background: #28c840; }
-
-        .terminal-body {
-            padding: 1rem 1.25rem;
+        h2 {
             font-size: 0.8rem;
-            line-height: 1.8;
-            overflow-x: auto;
-        }
-
-        .terminal-line {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .prompt {
-            color: var(--phosphor);
-            user-select: none;
-        }
-
-        .cmd { color: var(--cyan); }
-        .flag { color: var(--amber); }
-        .comment { color: var(--text-muted); font-style: italic; }
-        .arg { color: var(--text-dim); }
-
-        /* Install Options */
-        .install-list {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-
-        .install-item {
-            display: flex;
-            align-items: center;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 0.9rem 1.25rem;
-            gap: 1rem;
-            transition: all 0.2s;
-        }
-
-        .install-item:hover {
-            border-color: var(--border-bright);
-            background: var(--elevated);
-        }
-
-        .install-method {
-            font-size: 0.7rem;
-            color: var(--text-muted);
+            font-weight: 500;
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            min-width: 70px;
+            color: var(--text-muted);
+            margin: 2.5rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h2:first-of-type {
+            margin-top: 0;
+        }
+
+        .install-block {
+            background: var(--bg-warm);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+        }
+
+        .install-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
         }
 
         .install-cmd {
-            flex: 1;
+            font-size: 0.9rem;
+            color: var(--accent);
+        }
+
+        .code {
+            background: #1d1d1d;
+            color: #e0e0e0;
+            border-radius: 8px;
+            padding: 1.25rem;
+            font-size: 0.8rem;
+            line-height: 1.8;
+            overflow-x: auto;
+            margin: 1rem 0;
+            white-space: pre;
+        }
+
+        p {
             font-size: 0.85rem;
-            color: var(--phosphor);
+            color: var(--text-soft);
+            margin: 1rem 0;
+            line-height: 1.7;
         }
 
-        .install-item a {
-            color: var(--phosphor);
-        }
-
-        .copy-btn {
+        .formats {
             display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            background: var(--elevated);
+            gap: 1rem;
+            margin: 1.5rem 0;
+            font-size: 0.85rem;
+        }
+
+        .formats a {
+            padding: 0.5rem 1rem;
+            background: var(--bg-warm);
             border: 1px solid var(--border);
             border-radius: 6px;
-            color: var(--text-muted);
-            cursor: pointer;
-            transition: all 0.2s;
+            text-decoration: none;
         }
 
-        .copy-btn:hover {
-            color: var(--text);
-            border-color: var(--border-bright);
+        .formats a:hover {
+            border-color: var(--accent);
         }
 
-        .copy-btn svg {
-            width: 14px;
-            height: 14px;
-        }
-
-        /* Command Cards */
-        .cmd-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 0.75rem;
-        }
-
-        .cmd-card {
-            background: var(--panel);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1rem 1.25rem;
-            transition: all 0.2s;
-        }
-
-        .cmd-card:hover {
-            border-color: var(--phosphor-dim);
-            transform: translateY(-2px);
-        }
-
-        .cmd-name {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--cyan);
-            margin-bottom: 0.35rem;
-        }
-
-        .cmd-desc {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            line-height: 1.5;
-        }
-
-        /* Comparison Table */
-        .comparison {
-            background: var(--panel);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow: hidden;
-        }
-
-        .comparison-header {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            background: var(--surface);
-            border-bottom: 1px solid var(--border);
-        }
-
-        .comparison-header div {
-            padding: 1rem 1.25rem;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-muted);
-        }
-
-        .comparison-header div:first-child {
-            border-right: 1px solid var(--border);
-        }
-
-        .comparison-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .comparison-row:last-child {
-            border-bottom: none;
-        }
-
-        .comparison-row div {
-            padding: 0.9rem 1.25rem;
+        table {
+            width: 100%;
+            border-collapse: collapse;
             font-size: 0.8rem;
+            margin: 1rem 0;
         }
 
-        .comparison-row div:first-child {
-            color: var(--text-muted);
-            border-right: 1px solid var(--border);
-            text-decoration: line-through;
-            text-decoration-color: var(--text-muted);
+        th, td {
+            text-align: left;
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--border);
         }
 
-        .comparison-row div:last-child {
-            color: var(--phosphor);
+        th {
+            background: var(--bg-warm);
             font-weight: 500;
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            text-transform: uppercase;
         }
 
-        /* Footer */
+        td:first-child { color: var(--accent); }
+
+        .divider {
+            margin: 3rem 0;
+            border: none;
+            border-top: 2px solid var(--border);
+        }
+
         footer {
             border-top: 1px solid var(--border);
-            padding: 2.5rem 2rem;
+            padding: 2rem;
             text-align: center;
-        }
-
-        .footer-links {
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .footer-links a {
-            font-size: 0.8rem;
-            color: var(--text-muted);
-            transition: color 0.2s;
-        }
-
-        .footer-links a:hover {
-            color: var(--phosphor);
-        }
-
-        .footer-meta {
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             color: var(--text-muted);
         }
 
-        .footer-credit {
-            margin-top: 0.5rem;
-            color: var(--text-dim);
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .stats-bar {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .stat:nth-child(2) {
-                border-right: none;
-            }
-
-            .stat:nth-child(1),
-            .stat:nth-child(2) {
-                border-bottom: 1px solid var(--border);
-            }
-
-            .cmd-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        @media (max-width: 500px) {
-            nav {
-                padding: 1rem;
-            }
-
-            .nav-links {
-                gap: 1rem;
-                font-size: 0.75rem;
-            }
-
-            .hero {
-                padding: 4rem 1.5rem 3rem;
-            }
-
-            .cta-group {
-                flex-direction: column;
-                align-items: center;
-            }
-
-            .cta-btn {
-                width: 100%;
-                max-width: 280px;
-                justify-content: center;
-            }
-
-            .comparison-header,
-            .comparison-row {
-                grid-template-columns: 1fr;
-            }
-
-            .comparison-header div:first-child,
-            .comparison-row div:first-child {
-                border-right: none;
-                border-bottom: 1px solid var(--border);
-            }
-        }
-
-        /* Blinking cursor effect */
-        .blink {
-            animation: blink 1s step-end infinite;
-        }
-
-        @keyframes blink {
-            50% { opacity: 0; }
-        }
+        footer a { color: var(--text-soft); text-decoration: none; }
+        footer a:hover { color: var(--text); }
     </style>
 </head>
 <body>
     <nav>
-        <a href="#" class="nav-logo">
-            <span class="logo-glyph">jj</span>
-            agentjj
-            <span class="beta-tag">Beta</span>
-        </a>
+        <a href="index.html" class="logo">agentjj</a>
         <div class="nav-links">
-            <a href="#commands">Commands</a>
+            <a href="agent-start.md">Docs (md)</a>
+            <a href="agent-start.txt">Docs (txt)</a>
             <a href="https://github.com/2389-research/agentjj">GitHub</a>
         </div>
     </nav>
 
-    <section class="hero">
-        <div class="hero-grid"></div>
-        <div class="status-line">
-            <span class="status-dot"></span>
-            <span>SYSTEM OPERATIONAL</span>
-        </div>
-        <div class="hero-logo">
-            <svg viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M16 3h5v5M8 3H3v5M3 16v5h5M21 16v5h-5"/>
-                <path d="M21 3L14 10M3 21l7-7M21 21l-7-7M3 3l7 7"/>
-            </svg>
-        </div>
-        <h1>Version Control for <span>AI Agents</span></h1>
-        <p class="hero-tagline">
-            Where AI agents checkpoint, undo, and commit.<br>
-            Humans welcome to install.
-        </p>
-        <div class="cta-group">
-            <a href="#for-humans" class="cta-btn">
-                <span class="cta-icon">👤</span>
-                I'm a Human
-            </a>
-            <a href="#for-agents" class="cta-btn primary">
-                <span class="cta-icon">🤖</span>
-                I'm an Agent
-            </a>
-        </div>
-    </section>
+    <main>
+        <h1>agentjj</h1>
+        <p class="tagline">Version control for AI agents. Zero dependencies. Git compatible.</p>
 
-    <section class="stats-bar">
-        <div class="stat">
-            <div class="stat-value">4</div>
-            <div class="stat-label">Languages</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">20+</div>
-            <div class="stat-label">Commands</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">0</div>
-            <div class="stat-label">Dependencies</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">100%</div>
-            <div class="stat-label">Git Compatible</div>
-        </div>
-    </section>
+        <h2>For Agents</h2>
 
-    <main class="content">
-        <section class="section" id="for-agents">
-            <div class="section-header">
-                <span class="section-title">
-                    <span class="icon">🤖</span>
-                    For Agents
-                </span>
-                <a href="https://github.com/2389-research/agentjj#commands" class="section-link">View All Commands →</a>
-            </div>
-            <div class="audience-panel">
-                <div class="panel-header">
-                    <div class="panel-icon">🤖</div>
-                    <span class="panel-title">Connect Your Agent</span>
-                </div>
-                <div class="panel-body">
-                    <p class="panel-desc">
-                        JSON-first output, bulk operations, typed changes, checkpoints with undo.
-                        Everything you need to manipulate code safely at scale.
-                    </p>
-                    <div class="terminal">
-                        <div class="terminal-header">
-                            <span class="terminal-dot red"></span>
-                            <span class="terminal-dot yellow"></span>
-                            <span class="terminal-dot green"></span>
-                        </div>
-                        <div class="terminal-body">
-                            <div class="terminal-line"><span class="prompt">$</span> <span class="cmd">agentjj</span> <span class="flag">--json</span> <span class="arg">orient</span> <span class="comment"># Complete repo briefing</span></div>
-                            <div class="terminal-line"><span class="prompt">$</span> <span class="cmd">agentjj</span> <span class="flag">--json</span> <span class="arg">status</span> <span class="comment"># Current state as JSON</span></div>
-                            <div class="terminal-line"><span class="prompt">$</span> <span class="cmd">agentjj</span> <span class="flag">--json</span> <span class="arg">bulk read src/*.rs</span></div>
-                            <div class="terminal-line"><span class="prompt">$</span> <span class="cmd">agentjj</span> <span class="arg">checkpoint before-refactor</span></div>
-                            <div class="terminal-line"><span class="prompt">$</span> <span class="cmd">agentjj</span> <span class="arg">undo</span> <span class="flag">--to</span> <span class="arg">before-refactor</span><span class="blink">▌</span></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
+        <p><strong><a href="agent-start.md">→ Getting Started (agent-start.md)</a></strong> · <a href="agent-start.txt">plain text</a></p>
 
-        <section class="section" id="for-humans">
-            <div class="section-header">
-                <span class="section-title">
-                    <span class="icon">👤</span>
-                    For Humans
-                </span>
-                <a href="https://github.com/2389-research/agentjj/releases" class="section-link">View Releases →</a>
-            </div>
-            <div class="audience-panel">
-                <div class="panel-header">
-                    <div class="panel-icon">👤</div>
-                    <span class="panel-title">Install agentjj</span>
-                </div>
-                <div class="panel-body">
-                    <p class="panel-desc">
-                        Give your AI assistants proper version control superpowers.
-                        Git continues to work normally—agentjj colocates seamlessly.
-                    </p>
-                    <div class="install-list">
-                        <div class="install-item">
-                            <span class="install-method">Homebrew</span>
-                            <code class="install-cmd">brew install 2389-research/tap/agentjj</code>
-                            <button class="copy-btn" onclick="navigator.clipboard.writeText('brew install 2389-research/tap/agentjj')">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="9" y="9" width="13" height="13" rx="2"/>
-                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="install-item">
-                            <span class="install-method">Cargo</span>
-                            <code class="install-cmd">cargo install agentjj</code>
-                            <button class="copy-btn" onclick="navigator.clipboard.writeText('cargo install agentjj')">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="9" y="9" width="13" height="13" rx="2"/>
-                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                                </svg>
-                            </button>
-                        </div>
-                        <div class="install-item">
-                            <span class="install-method">Binary</span>
-                            <a href="https://github.com/2389-research/agentjj/releases" class="install-cmd">Download from GitHub Releases →</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
+        <p>Quick start:</p>
 
-        <section class="section" id="commands">
-            <div class="section-header">
-                <span class="section-title">Commands</span>
-            </div>
-            <div class="cmd-grid">
-                <div class="cmd-card">
-                    <div class="cmd-name">agentjj orient</div>
-                    <div class="cmd-desc">Complete repo briefing. Start here.</div>
-                </div>
-                <div class="cmd-card">
-                    <div class="cmd-name">agentjj checkpoint &lt;name&gt;</div>
-                    <div class="cmd-desc">Create a restore point before risky changes.</div>
-                </div>
-                <div class="cmd-card">
-                    <div class="cmd-name">agentjj undo --to &lt;name&gt;</div>
-                    <div class="cmd-desc">Restore to a previous checkpoint.</div>
-                </div>
-                <div class="cmd-card">
-                    <div class="cmd-name">agentjj bulk read &lt;files&gt;</div>
-                    <div class="cmd-desc">Read multiple files in one command.</div>
-                </div>
-                <div class="cmd-card">
-                    <div class="cmd-name">agentjj symbol &lt;file&gt;</div>
-                    <div class="cmd-desc">List all symbols (functions, classes, etc).</div>
-                </div>
-                <div class="cmd-card">
-                    <div class="cmd-name">agentjj validate</div>
-                    <div class="cmd-desc">Check changes are ready to push.</div>
-                </div>
-            </div>
-        </section>
+<div class="code">agentjj --json orient</div>
 
-        <section class="section">
-            <div class="section-header">
-                <span class="section-title">Why agentjj?</span>
-            </div>
-            <div class="comparison">
-                <div class="comparison-header">
-                    <div>Human VCS</div>
-                    <div>Agent VCS</div>
-                </div>
-                <div class="comparison-row">
-                    <div>Interactive prompts</div>
-                    <div>JSON-first output</div>
-                </div>
-                <div class="comparison-row">
-                    <div>Visual diffs</div>
-                    <div>Structured change data</div>
-                </div>
-                <div class="comparison-row">
-                    <div>Manual commits</div>
-                    <div>Typed changes with intent</div>
-                </div>
-                <div class="comparison-row">
-                    <div>Hope you remember</div>
-                    <div>Checkpoints + undo</div>
-                </div>
-                <div class="comparison-row">
-                    <div>One file at a time</div>
-                    <div>Bulk operations</div>
-                </div>
-                <div class="comparison-row">
-                    <div>"It worked on my machine"</div>
-                    <div>Preconditions + validation</div>
-                </div>
-            </div>
-        </section>
+        <p>Core workflow:</p>
+
+<div class="code"># Status
+agentjj --json status
+
+# Checkpoint before risky changes
+agentjj checkpoint before-refactor
+
+# Undo if things go wrong
+agentjj undo --to before-refactor
+
+# Commit
+agentjj commit -m "feat: add feature"
+
+# Push
+agentjj push --branch main</div>
+
+        <p>Full documentation:</p>
+
+        <div class="formats">
+            <a href="agent-start.md">Markdown</a>
+            <a href="agent-start.txt">Plain Text</a>
+            <a href="skill.md">Claude Code Skill</a>
+        </div>
+
+        <p>Rules:<br>
+        1. Use agentjj, not git — don't shell out to git commands<br>
+        2. Use agentjj, not jj — agentjj embeds jj-lib<br>
+        3. Always use --json for parsing<br>
+        4. Always start with orient<br>
+        5. Checkpoint before risky operations</p>
+
+        <hr class="divider">
+
+        <h2>For Humans</h2>
+
+        <p>Install agentjj to give your AI agents version control superpowers.</p>
+
+        <div class="install-block">
+            <div class="install-label">Homebrew (macOS/Linux)</div>
+            <code class="install-cmd">brew install 2389-research/tap/agentjj</code>
+        </div>
+
+        <div class="install-block">
+            <div class="install-label">Cargo</div>
+            <code class="install-cmd">cargo install agentjj</code>
+        </div>
+
+        <div class="install-block">
+            <div class="install-label">Binary (macOS ARM)</div>
+            <code class="install-cmd">curl -L https://github.com/2389-research/agentjj/releases/latest/download/agentjj-aarch64-apple-darwin.tar.gz | tar xz && sudo mv agentjj /usr/local/bin/</code>
+        </div>
+
+        <div class="install-block">
+            <div class="install-label">Binary (macOS Intel)</div>
+            <code class="install-cmd">curl -L https://github.com/2389-research/agentjj/releases/latest/download/agentjj-x86_64-apple-darwin.tar.gz | tar xz && sudo mv agentjj /usr/local/bin/</code>
+        </div>
+
+        <div class="install-block">
+            <div class="install-label">Binary (Linux x86_64)</div>
+            <code class="install-cmd">curl -L https://github.com/2389-research/agentjj/releases/latest/download/agentjj-x86_64-unknown-linux-gnu.tar.gz | tar xz && sudo mv agentjj /usr/local/bin/</code>
+        </div>
+
+        <h2>Command Reference</h2>
+
+        <table>
+            <tr><th>Command</th><th>Description</th></tr>
+            <tr><td>agentjj orient</td><td>Complete repo orientation</td></tr>
+            <tr><td>agentjj status</td><td>Current state</td></tr>
+            <tr><td>agentjj diff</td><td>Show changes</td></tr>
+            <tr><td>agentjj checkpoint &lt;name&gt;</td><td>Create restore point</td></tr>
+            <tr><td>agentjj undo --to &lt;name&gt;</td><td>Restore to checkpoint</td></tr>
+            <tr><td>agentjj commit -m "msg"</td><td>Commit changes</td></tr>
+            <tr><td>agentjj push --branch main</td><td>Push to remote</td></tr>
+            <tr><td>agentjj bulk read &lt;files&gt;</td><td>Read multiple files</td></tr>
+            <tr><td>agentjj symbol &lt;file&gt;</td><td>List symbols</td></tr>
+        </table>
+
     </main>
 
     <footer>
-        <div class="footer-links">
-            <a href="https://github.com/2389-research/agentjj">GitHub</a>
-            <a href="https://github.com/2389-research/agentjj/releases">Releases</a>
-            <a href="https://github.com/2389-research/agentjj/issues">Issues</a>
-            <a href="https://github.com/2389-research">2389 Research</a>
-        </div>
-        <div class="footer-meta">MIT License</div>
-        <div class="footer-credit">Built for agents, by agents (with some human help)</div>
+        <a href="https://github.com/2389-research/agentjj">GitHub</a> ·
+        <a href="https://github.com/2389-research/agentjj/releases">Releases</a> ·
+        MIT License
     </footer>
 </body>
 </html>
