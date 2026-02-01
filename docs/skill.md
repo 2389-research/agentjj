@@ -1,130 +1,130 @@
 ---
 name: agentjj
-version: 0.1.1
-description: Agent-first version control - a self-contained porcelain for jj/git
-homepage: https://github.com/2389-research/agentjj
-tags: [version-control, git, jj, cli, agent-tools]
+description: Agent-first version control with jj. Self-contained (no jj install needed). Auto-colocates with git repos. Complete orientation, typed commits, symbol queries, checkpoints, undo, bulk operations, impact analysis. Use --json for machine output. Start with 'agentjj orient' in any repo.
 ---
 
-# agentjj
+# agentjj - Agent-First Version Control
 
-Agent-first version control. Self-contained binary that works with any git repo.
+An agent-oriented porcelain for Jujutsu (jj) version control. Designed to make AI agents love version control.
 
-## Installation
+**Zero-install**: agentjj embeds jj-lib directly - no separate jj installation required.
 
-### Homebrew (macOS/Linux)
-
-```bash
-brew install 2389-research/tap/agentjj
-```
-
-### Cargo (Rust)
-
-```bash
-cargo install agentjj
-```
-
-### Binary Download
-
-```bash
-# macOS ARM (M1/M2/M3)
-curl -L https://github.com/2389-research/agentjj/releases/latest/download/agentjj-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv agentjj /usr/local/bin/
-
-# macOS Intel
-curl -L https://github.com/2389-research/agentjj/releases/latest/download/agentjj-x86_64-apple-darwin.tar.gz | tar xz
-sudo mv agentjj /usr/local/bin/
-
-# Linux x86_64
-curl -L https://github.com/2389-research/agentjj/releases/latest/download/agentjj-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv agentjj /usr/local/bin/
-```
-
-### Verify Installation
-
-```bash
-agentjj --version
-```
+**Git-compatible**: Automatically colocates with existing git repos. Git continues to work normally.
 
 ## Quick Start
 
-### 1. Orient Yourself
-
-In any git repository, run:
-
 ```bash
-agentjj orient
+# In any git repo - agentjj auto-initializes jj colocated
+agentjj orient                  # Get complete repo orientation
+
+# Optional: create agent manifest for permissions/invariants
+agentjj init                    # Create .agent/manifest.toml
 ```
 
-This returns everything you need: current state, file structure, recent changes, and suggested actions.
+## Core Philosophy
 
-### 2. Core Workflow
+1. **Everything is JSON** - Use `--json` for machine-parseable output
+2. **Self-documenting** - `agentjj schema` shows all output formats
+3. **Safe by default** - Checkpoints and undo for easy recovery
+4. **Batch-friendly** - Bulk operations for efficiency
+5. **Context-rich** - Get exactly what you need without bloat
 
-```bash
-# See current state
-agentjj status
+## Essential Commands
 
-# See what changed
-agentjj diff
-
-# Make your edits to files...
-
-# Commit changes
-agentjj commit -m "feat: add user authentication"
-
-# Push to remote
-agentjj push --branch main
-```
-
-### 3. Safety First
-
-Before risky operations, create a checkpoint:
+### Orient (Start Here)
 
 ```bash
-agentjj checkpoint before-refactor
-
-# ... do dangerous stuff ...
-
-# If things go wrong:
-agentjj undo --to before-refactor
+agentjj orient                  # Complete repo briefing
+agentjj --json orient           # As structured JSON
 ```
 
-## Commands
+Returns: current state, codebase stats, recent changes, capabilities, quick start guide.
 
-### Repository State
+### Status & Discovery
 
-| Command | Description |
-|---------|-------------|
-| `agentjj orient` | Complete repo orientation (start here) |
-| `agentjj status` | Current change ID, operation ID, files |
-| `agentjj diff` | Show current changes |
-| `agentjj graph` | Visualize commit DAG |
+```bash
+agentjj status                  # Current change, operation, files
+agentjj suggest                 # What should I do next?
+agentjj validate                # Are my changes ready to push?
+```
 
-### Making Changes
+### Reading Code
 
-| Command | Description |
-|---------|-------------|
-| `agentjj commit -m "msg"` | Commit current changes |
-| `agentjj push --branch main` | Push to remote |
-| `agentjj tag v1.0.0 --push` | Create and push a tag |
+```bash
+agentjj read src/main.rs                    # Read file
+agentjj symbol src/api.py                   # List all symbols
+agentjj symbol src/api.py::process          # Get specific symbol
+agentjj context src/api.py::process         # Minimal context to use symbol
+agentjj affected src/api.py::process        # Impact analysis
+```
 
-### Code Intelligence
+### Bulk Operations (10x Efficiency)
 
-| Command | Description |
-|---------|-------------|
-| `agentjj read <file>` | Read file content |
-| `agentjj symbol <file>` | List symbols in file |
-| `agentjj context <file>::<symbol>` | Get context for a symbol |
-| `agentjj bulk read <files...>` | Read multiple files |
+```bash
+agentjj bulk read src/a.rs src/b.rs src/c.rs
+agentjj bulk symbols "src/**/*.rs"
+agentjj bulk symbols "src/**/*.rs" --public-only
+agentjj bulk context src/a.rs::foo src/b.rs::bar
+```
 
-### Safety & Recovery
+### Files & Structure
 
-| Command | Description |
-|---------|-------------|
-| `agentjj checkpoint <name>` | Create named restore point |
-| `agentjj undo` | Undo last operation |
-| `agentjj undo --to <name>` | Restore to checkpoint |
-| `agentjj undo --dry-run` | Preview what would be undone |
+```bash
+agentjj files                               # List all files
+agentjj files --pattern "src/**/*.rs"       # Filter by pattern
+agentjj files --pattern "*.py" --symbols    # Include symbol counts
+```
+
+### Checkpoints & Recovery
+
+```bash
+agentjj checkpoint before-refactor          # Create checkpoint
+agentjj checkpoint wip -d "work in progress"
+agentjj undo                                # Undo last operation
+agentjj undo --steps 3                      # Undo 3 operations
+agentjj undo --to before-refactor           # Restore to named checkpoint
+agentjj undo --dry-run                      # Preview what would be undone
+```
+
+### Changes & Diffs
+
+```bash
+agentjj diff                                # Show current diff
+agentjj diff --explain                      # With semantic summary
+agentjj diff --against @--                  # Compare to 2 changes ago
+```
+
+### Typed Changes
+
+```bash
+agentjj change set -i "Add auth" -t behavioral -c feature
+agentjj change list
+agentjj change show <change_id>
+```
+
+Types: `behavioral`, `refactor`, `schema`, `docs`, `deps`, `config`, `test`
+Categories: `feature`, `fix`, `perf`, `security`, `breaking`, `deprecation`, `chore`
+
+### Apply & Push
+
+```bash
+agentjj apply \
+  --intent "Fix null check" \
+  --type behavioral \
+  --category fix \
+  --patch fix.patch
+
+agentjj push                               # Push to remote
+agentjj push --pr --title "Fix bug"        # Create PR
+```
+
+### Self-Documentation
+
+```bash
+agentjj schema                             # List all output schemas
+agentjj schema --type context              # Show specific schema
+agentjj schema --type orient               # See orient output format
+```
 
 ## JSON Mode
 
@@ -133,78 +133,79 @@ agentjj undo --to before-refactor
 ```bash
 agentjj --json status
 agentjj --json orient
-agentjj --json diff
+agentjj --json context src/main.rs::main
+agentjj --json bulk read file1.rs file2.rs
+agentjj --json affected src/api.rs::handler
 ```
 
-Output is structured JSON. Errors return:
+Errors also return JSON:
 ```json
-{"error": true, "message": "Description of what went wrong"}
+{"error": true, "message": "Symbol path must be path/to/file::symbol_name"}
 ```
 
-Exit codes: `0` = success, `1` = error
+Exit codes: 0 = success, 1 = error
 
-## Typed Commits
-
-Add semantic metadata to commits:
+## Workflow Example
 
 ```bash
-agentjj change set \
-  --intent "Add retry logic" \
-  --type behavioral \
-  --category feature
+# 1. Orient yourself
+agentjj --json orient
+
+# 2. Understand what you're changing
+agentjj context src/auth.rs::login
+agentjj affected src/auth.rs::login
+
+# 3. Create a checkpoint
+agentjj checkpoint before-auth-refactor
+
+# 4. Make changes, then validate
+agentjj validate
+
+# 5. Set typed change metadata
+agentjj change set -i "Refactor login for OAuth" -t refactor
+
+# 6. Push with PR
+agentjj push --pr --title "OAuth login support"
 ```
 
-**Types:** `behavioral`, `refactor`, `schema`, `docs`, `deps`, `config`, `test`
+## Command Reference
 
-**Categories:** `feature`, `fix`, `perf`, `security`, `breaking`, `deprecation`, `chore`
+| Command | Description |
+|---------|-------------|
+| `orient` | Complete repo orientation |
+| `status` | Current state |
+| `suggest` | Recommended next actions |
+| `validate` | Check changes are ready |
+| `read <path>` | Read file content |
+| `symbol <path>` | Query symbols |
+| `context <path>::<name>` | Get symbol context |
+| `affected <path>::<name>` | Impact analysis |
+| `bulk read <paths...>` | Read multiple files |
+| `bulk symbols <pattern>` | Query symbols across files |
+| `bulk context <symbols...>` | Get multiple contexts |
+| `files [--pattern] [--symbols]` | List files |
+| `checkpoint <name>` | Create restore point |
+| `undo [--steps N]` | Revert operations |
+| `diff [--explain]` | Show changes |
+| `change set/list/show` | Typed change metadata |
+| `apply` | Apply intent transaction |
+| `push [--pr]` | Push and optionally create PR |
+| `schema [--type]` | Output schemas |
+| `init` | Initialize agentjj |
+| `manifest show/validate` | Manage manifest |
 
-## Graph Formats
+All commands support `--json` for structured output.
 
-```bash
-# ASCII (default)
-agentjj graph
+## Supported Languages
 
-# Mermaid (for markdown/docs)
-agentjj graph --format mermaid
+Symbol extraction: Python, Rust, JavaScript, TypeScript
 
-# Graphviz DOT
-agentjj graph --format dot
+## Pro Tips
 
-# More commits
-agentjj graph --limit 20
-
-# All branches
-agentjj graph --all
-```
-
-## Important Rules
-
-1. **Use agentjj, not git** - Don't shell out to `git` commands
-2. **Use agentjj, not jj** - agentjj embeds jj-lib, no jj CLI needed
-3. **Always start with `orient`** - It's your best context source
-4. **Use `--json` for parsing** - Human output may change
-5. **Checkpoint before risk** - Easy recovery beats careful planning
-
-## Self-Documenting
-
-```bash
-# List all output schemas
-agentjj schema
-
-# Get specific schema
-agentjj schema --type status
-agentjj schema --type orient
-```
-
-## Help
-
-```bash
-agentjj --help
-agentjj <command> --help
-```
-
-## Links
-
-- Repository: https://github.com/2389-research/agentjj
-- Releases: https://github.com/2389-research/agentjj/releases
-- Homebrew: `brew install 2389-research/tap/agentjj`
+1. **Start with `orient`** - It tells you everything about the repo
+2. **Use `--json` always** - Reliable parsing, never breaks
+3. **Checkpoint before risky changes** - Easy recovery
+4. **Use `bulk` for efficiency** - One call, many results
+5. **Check `affected` before changing** - Know the blast radius
+6. **`suggest` when stuck** - Let the tool guide you
+7. **`validate` before pushing** - Catch issues early
