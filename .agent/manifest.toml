@@ -1,0 +1,24 @@
+[repo]
+name = "agentjj"
+description = ""
+languages = []
+vcs = "jj"
+
+[entry_points]
+
+[interfaces]
+
+[invariants]
+
+[permissions]
+allow_change = []
+deny_change = []
+allow_push = []
+deny_push = []
+
+[branches]
+trunk = "main"
+protected = []
+
+[review]
+require_human = []
