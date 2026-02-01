@@ -1,62 +1,134 @@
-# Getting Started with agentjj
+---
+name: agentjj
+version: 0.1.0
+description: Agent-first version control - a self-contained porcelain for jj/git
+homepage: https://github.com/2389-research/agentjj
+tags: [version-control, git, jj, cli, agent-tools]
+---
 
-You're an AI agent about to work with version control. This guide gets you productive in 60 seconds.
+# agentjj
 
-## First Command
+Agent-first version control. Self-contained binary that works with any git repo.
 
-Run this to understand the repository:
+## Installation
+
+### Homebrew (macOS/Linux)
+
+```bash
+brew install 2389-research/tap/agentjj
+```
+
+### Cargo (Rust)
+
+```bash
+cargo install agentjj
+```
+
+### Binary Download
+
+```bash
+# macOS ARM (M1/M2/M3)
+curl -L https://github.com/2389-research/agentjj/releases/latest/download/agentjj-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv agentjj /usr/local/bin/
+
+# macOS Intel
+curl -L https://github.com/2389-research/agentjj/releases/latest/download/agentjj-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv agentjj /usr/local/bin/
+
+# Linux x86_64
+curl -L https://github.com/2389-research/agentjj/releases/latest/download/agentjj-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv agentjj /usr/local/bin/
+```
+
+### Verify Installation
+
+```bash
+agentjj --version
+```
+
+## Quick Start
+
+### 1. Orient Yourself
+
+In any git repository, run:
 
 ```bash
 agentjj orient
 ```
 
-This gives you everything: current state, file structure, recent changes, and suggested next actions.
+This returns everything you need: current state, file structure, recent changes, and suggested actions.
 
-## Core Workflow
+### 2. Core Workflow
 
 ```bash
-# 1. See what's changed
+# See current state
 agentjj status
+
+# See what changed
 agentjj diff
 
-# 2. Make your changes to files (edit, write, etc.)
+# Make your edits to files...
 
-# 3. Commit with a message
+# Commit changes
 agentjj commit -m "feat: add user authentication"
 
-# 4. Push to remote
+# Push to remote
 agentjj push --branch main
 ```
 
-## Before Risky Changes
+### 3. Safety First
 
-Create a checkpoint you can return to:
+Before risky operations, create a checkpoint:
 
 ```bash
 agentjj checkpoint before-refactor
-# ... do risky stuff ...
-agentjj undo --to before-refactor  # if things go wrong
+
+# ... do dangerous stuff ...
+
+# If things go wrong:
+agentjj undo --to before-refactor
 ```
 
-## Reading Code
+## Commands
 
-```bash
-# Read a file
-agentjj read src/main.rs
+### Repository State
 
-# List symbols in a file
-agentjj symbol src/main.rs
+| Command | Description |
+|---------|-------------|
+| `agentjj orient` | Complete repo orientation (start here) |
+| `agentjj status` | Current change ID, operation ID, files |
+| `agentjj diff` | Show current changes |
+| `agentjj graph` | Visualize commit DAG |
 
-# Get context for using a specific symbol
-agentjj context src/main.rs::process_request
+### Making Changes
 
-# Bulk read multiple files
-agentjj bulk read src/a.rs src/b.rs src/c.rs
-```
+| Command | Description |
+|---------|-------------|
+| `agentjj commit -m "msg"` | Commit current changes |
+| `agentjj push --branch main` | Push to remote |
+| `agentjj tag v1.0.0 --push` | Create and push a tag |
 
-## JSON Output
+### Code Intelligence
 
-Always use `--json` for programmatic access:
+| Command | Description |
+|---------|-------------|
+| `agentjj read <file>` | Read file content |
+| `agentjj symbol <file>` | List symbols in file |
+| `agentjj context <file>::<symbol>` | Get context for a symbol |
+| `agentjj bulk read <files...>` | Read multiple files |
+
+### Safety & Recovery
+
+| Command | Description |
+|---------|-------------|
+| `agentjj checkpoint <name>` | Create named restore point |
+| `agentjj undo` | Undo last operation |
+| `agentjj undo --to <name>` | Restore to checkpoint |
+| `agentjj undo --dry-run` | Preview what would be undone |
+
+## JSON Mode
+
+**Always use `--json` for programmatic access:**
 
 ```bash
 agentjj --json status
@@ -64,18 +136,20 @@ agentjj --json orient
 agentjj --json diff
 ```
 
-All commands return structured JSON. Errors also return JSON:
+Output is structured JSON. Errors return:
 ```json
-{"error": true, "message": "File not found: foo.rs"}
+{"error": true, "message": "Description of what went wrong"}
 ```
+
+Exit codes: `0` = success, `1` = error
 
 ## Typed Commits
 
-Add semantic metadata to your commits:
+Add semantic metadata to commits:
 
 ```bash
 agentjj change set \
-  --intent "Add retry logic to webhook handler" \
+  --intent "Add retry logic" \
   --type behavioral \
   --category feature
 ```
@@ -84,56 +158,53 @@ agentjj change set \
 
 **Categories:** `feature`, `fix`, `perf`, `security`, `breaking`, `deprecation`, `chore`
 
-## Releasing
+## Graph Formats
 
 ```bash
-# Tag a version
-agentjj tag v1.0.0 --push
-
-# Or tag with a message (annotated tag)
-agentjj tag v1.0.0 -m "Release 1.0.0" --push
-```
-
-## Visualizing History
-
-```bash
-# ASCII graph
+# ASCII (default)
 agentjj graph
 
-# Mermaid format (for markdown)
+# Mermaid (for markdown/docs)
 agentjj graph --format mermaid
 
-# Graphviz DOT format
+# Graphviz DOT
 agentjj graph --format dot
+
+# More commits
+agentjj graph --limit 20
+
+# All branches
+agentjj graph --all
 ```
 
-## Quick Reference
+## Important Rules
 
-| Task | Command |
-|------|---------|
-| Understand repo | `agentjj orient` |
-| Current state | `agentjj status` |
-| See changes | `agentjj diff` |
-| Commit | `agentjj commit -m "msg"` |
-| Push | `agentjj push --branch main` |
-| Create checkpoint | `agentjj checkpoint name` |
-| Undo | `agentjj undo` |
-| Restore checkpoint | `agentjj undo --to name` |
-| Read file | `agentjj read path` |
-| List symbols | `agentjj symbol path` |
-| Tag release | `agentjj tag v1.0.0 --push` |
+1. **Use agentjj, not git** - Don't shell out to `git` commands
+2. **Use agentjj, not jj** - agentjj embeds jj-lib, no jj CLI needed
+3. **Always start with `orient`** - It's your best context source
+4. **Use `--json` for parsing** - Human output may change
+5. **Checkpoint before risk** - Easy recovery beats careful planning
 
-## What NOT to Do
+## Self-Documenting
 
-- Don't use `git` commands directly - use `agentjj`
-- Don't use `jj` commands - agentjj embeds jj-lib
-- Don't skip `agentjj orient` - it's your best starting point
-- Don't forget `--json` when parsing output programmatically
+```bash
+# List all output schemas
+agentjj schema
 
-## Need Help?
+# Get specific schema
+agentjj schema --type status
+agentjj schema --type orient
+```
+
+## Help
 
 ```bash
 agentjj --help
 agentjj <command> --help
-agentjj schema  # See all output schemas
 ```
+
+## Links
+
+- Repository: https://github.com/2389-research/agentjj
+- Releases: https://github.com/2389-research/agentjj/releases
+- Homebrew: `brew install 2389-research/tap/agentjj`
