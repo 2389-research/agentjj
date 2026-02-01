@@ -411,14 +411,22 @@ fn cmd_init(name: Option<String>, json: bool) -> Result<()> {
     }
     std::fs::write(&manifest_path, manifest.to_toml()?)?;
 
+    // Create .agent/.gitignore to exclude local state but track manifest
+    let agent_gitignore = repo.root().join(".agent/.gitignore");
+    let gitignore_content = "# Agent-local state (not shared)\n\
+                             checkpoints/\n\
+                             changes/\n";
+    std::fs::write(&agent_gitignore, gitignore_content)?;
+
     if json {
         println!(
-            r#"{{"status": "created", "name": "{}", "path": ".agent/manifest.toml"}}"#,
+            r#"{{"status": "created", "name": "{}", "path": ".agent/manifest.toml", "gitignore": ".agent/.gitignore"}}"#,
             repo_name
         );
     } else {
         println!("Initialized agentjj for '{}'", repo_name);
         println!("Created .agent/manifest.toml");
+        println!("Created .agent/.gitignore (excludes local state)");
     }
 
     Ok(())
