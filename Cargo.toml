@@ -7,6 +7,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Agent-oriented porcelain for Jujutsu version control"
 license = "MIT"
+repository = "https://github.com/2389-research/agentjj"
+homepage = "https://github.com/2389-research/agentjj"
+readme = "README.md"
+keywords = ["jujutsu", "jj", "vcs", "git", "agent"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 # CLI

@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: agentjj-x86_64-apple-darwin
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: agentjj-aarch64-apple-darwin
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: agentjj-x86_64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czvf ../../../${{ matrix.name }}.tar.gz agentjj
+          cd ../../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create checksums
+        run: |
+          cd artifacts
+          for dir in */; do
+            mv "$dir"/*.tar.gz .
+          done
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/*.tar.gz
+            artifacts/checksums.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref, '-') }}  # Skip for pre-releases
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Publish to crates.io
+        if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  update-homebrew:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts for checksums
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Calculate SHA256 checksums
+        id: checksums
+        run: |
+          cd artifacts
+          for dir in */; do
+            mv "$dir"/*.tar.gz . 2>/dev/null || true
+          done
+          echo "sha_x86_64_darwin=$(sha256sum agentjj-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "sha_aarch64_darwin=$(sha256sum agentjj-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "sha_x86_64_linux=$(sha256sum agentjj-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Generate Homebrew formula
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA_X86_DARWIN: ${{ steps.checksums.outputs.sha_x86_64_darwin }}
+          SHA_ARM_DARWIN: ${{ steps.checksums.outputs.sha_aarch64_darwin }}
+          SHA_X86_LINUX: ${{ steps.checksums.outputs.sha_x86_64_linux }}
+        run: |
+          cat > agentjj.rb << EOF
+          class Agentjj < Formula
+            desc "Agent-oriented porcelain for Jujutsu version control"
+            homepage "https://github.com/2389-research/agentjj"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_intel do
+                url "https://github.com/2389-research/agentjj/releases/download/v${VERSION}/agentjj-x86_64-apple-darwin.tar.gz"
+                sha256 "${SHA_X86_DARWIN}"
+              end
+              on_arm do
+                url "https://github.com/2389-research/agentjj/releases/download/v${VERSION}/agentjj-aarch64-apple-darwin.tar.gz"
+                sha256 "${SHA_ARM_DARWIN}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/2389-research/agentjj/releases/download/v${VERSION}/agentjj-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${SHA_X86_LINUX}"
+              end
+            end
+
+            def install
+              bin.install "agentjj"
+            end
+
+            test do
+              system "\#{bin}/agentjj", "--version"
+            end
+          end
+          EOF
+          cat agentjj.rb
+
+      - name: Push to Homebrew tap
+        uses: dmnemec/copy_file_to_another_repo_action@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        with:
+          source_file: 'agentjj.rb'
+          destination_repo: '2389-research/homebrew-tap'
+          destination_folder: 'Formula'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          user_name: 'github-actions[bot]'
+          commit_message: 'agentjj ${{ needs.release.outputs.version }}'
