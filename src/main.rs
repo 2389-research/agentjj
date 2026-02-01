@@ -916,52 +916,56 @@ fn cmd_context(path: String, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_commit(message: String, no_new: bool, json: bool) -> Result<()> {
-    let mut repo = Repo::discover()?;
+fn cmd_commit(message: String, _no_new: bool, json: bool) -> Result<()> {
+    let repo = Repo::discover()?;
 
-    // Describe the current change
-    let describe_output = std::process::Command::new("jj")
+    // Use git directly for colocated repos
+    // Stage all changes
+    let add_output = std::process::Command::new("git")
         .current_dir(repo.root())
-        .args(["describe", "-m", &message])
+        .args(["add", "-A"])
         .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run jj describe: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to run git add: {}", e))?;
 
-    if !describe_output.status.success() {
-        let stderr = String::from_utf8_lossy(&describe_output.stderr);
-        anyhow::bail!("Failed to describe change: {}", stderr);
+    if !add_output.status.success() {
+        let stderr = String::from_utf8_lossy(&add_output.stderr);
+        anyhow::bail!("Failed to stage changes: {}", stderr);
     }
 
-    // Get the change ID before creating new
-    let change_id = repo.current_change_id()?;
+    // Commit with message
+    let commit_output = std::process::Command::new("git")
+        .current_dir(repo.root())
+        .args(["commit", "-m", &message])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run git commit: {}", e))?;
 
-    // Create a new working copy unless --no-new
-    if !no_new {
-        let new_output = std::process::Command::new("jj")
-            .current_dir(repo.root())
-            .args(["new"])
-            .output()
-            .map_err(|e| anyhow::anyhow!("Failed to run jj new: {}", e))?;
-
-        if !new_output.status.success() {
-            let stderr = String::from_utf8_lossy(&new_output.stderr);
-            anyhow::bail!("Failed to create new change: {}", stderr);
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        // Check if it's just "nothing to commit"
+        if stderr.contains("nothing to commit") || String::from_utf8_lossy(&commit_output.stdout).contains("nothing to commit") {
+            anyhow::bail!("Nothing to commit - working tree clean");
         }
+        anyhow::bail!("Failed to commit: {}", stderr);
     }
+
+    // Get the commit SHA
+    let rev_parse = std::process::Command::new("git")
+        .current_dir(repo.root())
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()?;
+
+    let commit_sha = String::from_utf8_lossy(&rev_parse.stdout).trim().to_string();
 
     if json {
         let result = serde_json::json!({
             "committed": true,
-            "change_id": change_id,
+            "commit": commit_sha,
             "message": message,
-            "new_working_copy": !no_new,
         });
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
         println!("✓ Committed: {}", message);
-        println!("  Change: {}", &change_id[..12.min(change_id.len())]);
-        if !no_new {
-            println!("  Created new working copy");
-        }
+        println!("  Commit: {}", commit_sha);
     }
 
     Ok(())
@@ -969,58 +973,35 @@ fn cmd_commit(message: String, no_new: bool, json: bool) -> Result<()> {
 
 fn cmd_push(
     branch: Option<String>,
-    change: Option<String>,
+    _change: Option<String>,
     create_pr: bool,
     title: Option<String>,
     body: Option<String>,
     target: String,
     json: bool,
 ) -> Result<()> {
-    let mut repo = Repo::discover()?;
+    let repo = Repo::discover()?;
 
-    // Determine which change to push
-    let change_to_push = if let Some(c) = change {
-        c
-    } else {
-        // Check if current working copy is empty, if so use parent
-        let status_output = std::process::Command::new("jj")
-            .current_dir(repo.root())
-            .args(["log", "-r", "@", "--no-graph", "-T", "if(empty, \"empty\", \"has_changes\")"])
-            .output()
-            .map_err(|e| anyhow::anyhow!("Failed to check status: {}", e))?;
+    // Use git directly for colocated repos (which is our primary mode)
+    let branch_name = branch.unwrap_or_else(|| "main".to_string());
 
-        let status = String::from_utf8_lossy(&status_output.stdout);
-        if status.trim() == "empty" {
-            "@-".to_string()  // Use parent if current is empty
-        } else {
-            "@".to_string()
-        }
-    };
-
-    // Determine branch name
-    let branch_name = branch.unwrap_or_else(|| {
-        // Default to current bookmark or generate from change ID
-        repo.current_change_id()
-            .map(|id| format!("agent/{}", &id[..8.min(id.len())]))
-            .unwrap_or_else(|_| "agent/push".to_string())
-    });
-
-    // Create bookmark pointing to the change
-    let bookmark_output = std::process::Command::new("jj")
+    // Get the commit to push (HEAD in git terms)
+    let rev_parse = std::process::Command::new("git")
         .current_dir(repo.root())
-        .args(["bookmark", "set", &branch_name, "-r", &change_to_push])
+        .args(["rev-parse", "HEAD"])
         .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run jj: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to run git: {}", e))?;
 
-    if !bookmark_output.status.success() {
-        let stderr = String::from_utf8_lossy(&bookmark_output.stderr);
-        anyhow::bail!("Failed to create bookmark: {}", stderr);
+    if !rev_parse.status.success() {
+        anyhow::bail!("Not a git repository or no commits");
     }
 
-    // Push to remote
-    let push_output = std::process::Command::new("jj")
+    let _commit_sha = String::from_utf8_lossy(&rev_parse.stdout).trim().to_string();
+
+    // Push to remote using git
+    let push_output = std::process::Command::new("git")
         .current_dir(repo.root())
-        .args(["git", "push", "--bookmark", &branch_name])
+        .args(["push", "origin", &format!("HEAD:{}", branch_name)])
         .output()?;
 
     if !push_output.status.success() {
