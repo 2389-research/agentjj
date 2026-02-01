@@ -126,6 +126,17 @@ enum Commands {
         target: String,
     },
 
+    /// Commit current changes with a message (describe + new)
+    Commit {
+        /// Commit message
+        #[arg(short, long)]
+        message: String,
+
+        /// Don't create a new working copy after committing
+        #[arg(long)]
+        no_new: bool,
+    },
+
     /// Complete repository orientation for agents - everything you need to start working
     Orient,
 
@@ -361,6 +372,7 @@ fn run_command(cli: Cli) -> Result<()> {
             body,
             target,
         } => cmd_push(branch, pr, title, body, target, cli.json),
+        Commands::Commit { message, no_new } => cmd_commit(message, no_new, cli.json),
         Commands::Orient => cmd_orient(cli.json),
         Commands::Checkpoint { name, description } => cmd_checkpoint(name, description, cli.json),
         Commands::Undo { steps, to, dry_run } => cmd_undo(steps, to, dry_run, cli.json),
@@ -893,6 +905,57 @@ fn cmd_context(path: String, json: bool) -> Result<()> {
                 println!("Symbol '{}' not found in {}", symbol_name, file_path);
             }
             std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_commit(message: String, no_new: bool, json: bool) -> Result<()> {
+    let mut repo = Repo::discover()?;
+
+    // Describe the current change
+    let describe_output = std::process::Command::new("jj")
+        .current_dir(repo.root())
+        .args(["describe", "-m", &message])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run jj describe: {}", e))?;
+
+    if !describe_output.status.success() {
+        let stderr = String::from_utf8_lossy(&describe_output.stderr);
+        anyhow::bail!("Failed to describe change: {}", stderr);
+    }
+
+    // Get the change ID before creating new
+    let change_id = repo.current_change_id()?;
+
+    // Create a new working copy unless --no-new
+    if !no_new {
+        let new_output = std::process::Command::new("jj")
+            .current_dir(repo.root())
+            .args(["new"])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to run jj new: {}", e))?;
+
+        if !new_output.status.success() {
+            let stderr = String::from_utf8_lossy(&new_output.stderr);
+            anyhow::bail!("Failed to create new change: {}", stderr);
+        }
+    }
+
+    if json {
+        let result = serde_json::json!({
+            "committed": true,
+            "change_id": change_id,
+            "message": message,
+            "new_working_copy": !no_new,
+        });
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        println!("✓ Committed: {}", message);
+        println!("  Change: {}", &change_id[..12.min(change_id.len())]);
+        if !no_new {
+            println!("  Created new working copy");
         }
     }
 
