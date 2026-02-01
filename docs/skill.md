@@ -1,6 +1,6 @@
 ---
 name: agentjj
-version: 0.1.0
+version: 0.1.1
 description: Agent-first version control - a self-contained porcelain for jj/git
 homepage: https://github.com/2389-research/agentjj
 tags: [version-control, git, jj, cli, agent-tools]
