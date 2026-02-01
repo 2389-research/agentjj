@@ -141,6 +141,24 @@ enum Commands {
         no_new: bool,
     },
 
+    /// Create or update a git tag
+    Tag {
+        /// Tag name (e.g., v0.1.0)
+        name: String,
+
+        /// Tag message (creates annotated tag)
+        #[arg(short, long)]
+        message: Option<String>,
+
+        /// Force update if tag exists
+        #[arg(short, long)]
+        force: bool,
+
+        /// Push tag to remote
+        #[arg(long)]
+        push: bool,
+    },
+
     /// Complete repository orientation for agents - everything you need to start working
     Orient,
 
@@ -378,6 +396,7 @@ fn run_command(cli: Cli) -> Result<()> {
             target,
         } => cmd_push(branch, change, pr, title, body, target, cli.json),
         Commands::Commit { message, no_new } => cmd_commit(message, no_new, cli.json),
+        Commands::Tag { name, message, force, push } => cmd_tag(name, message, force, push, cli.json),
         Commands::Orient => cmd_orient(cli.json),
         Commands::Checkpoint { name, description } => cmd_checkpoint(name, description, cli.json),
         Commands::Undo { steps, to, dry_run } => cmd_undo(steps, to, dry_run, cli.json),
@@ -966,6 +985,74 @@ fn cmd_commit(message: String, _no_new: bool, json: bool) -> Result<()> {
     } else {
         println!("✓ Committed: {}", message);
         println!("  Commit: {}", commit_sha);
+    }
+
+    Ok(())
+}
+
+fn cmd_tag(name: String, message: Option<String>, force: bool, push: bool, json: bool) -> Result<()> {
+    let repo = Repo::discover()?;
+
+    // Build tag command
+    let mut args = vec!["tag".to_string()];
+
+    if force {
+        args.push("-f".to_string());
+    }
+
+    if let Some(ref msg) = message {
+        args.push("-a".to_string());
+        args.push("-m".to_string());
+        args.push(msg.clone());
+    }
+
+    args.push(name.clone());
+
+    // Create the tag
+    let tag_output = std::process::Command::new("git")
+        .current_dir(repo.root())
+        .args(&args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run git tag: {}", e))?;
+
+    if !tag_output.status.success() {
+        let stderr = String::from_utf8_lossy(&tag_output.stderr);
+        anyhow::bail!("Failed to create tag: {}", stderr);
+    }
+
+    // Push tag if requested
+    if push {
+        let mut push_args = vec!["push".to_string(), "origin".to_string()];
+        if force {
+            push_args.push("--force".to_string());
+        }
+        push_args.push(name.clone());
+
+        let push_output = std::process::Command::new("git")
+            .current_dir(repo.root())
+            .args(&push_args)
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to push tag: {}", e))?;
+
+        if !push_output.status.success() {
+            let stderr = String::from_utf8_lossy(&push_output.stderr);
+            anyhow::bail!("Failed to push tag: {}", stderr);
+        }
+    }
+
+    if json {
+        let result = serde_json::json!({
+            "tag": name,
+            "pushed": push,
+            "forced": force,
+        });
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        if push {
+            println!("✓ Tagged and pushed: {}", name);
+        } else {
+            println!("✓ Tagged: {}", name);
+        }
     }
 
     Ok(())
