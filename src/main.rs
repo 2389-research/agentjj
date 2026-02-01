@@ -396,7 +396,12 @@ fn run_command(cli: Cli) -> Result<()> {
             target,
         } => cmd_push(branch, change, pr, title, body, target, cli.json),
         Commands::Commit { message, no_new } => cmd_commit(message, no_new, cli.json),
-        Commands::Tag { name, message, force, push } => cmd_tag(name, message, force, push, cli.json),
+        Commands::Tag {
+            name,
+            message,
+            force,
+            push,
+        } => cmd_tag(name, message, force, push, cli.json),
         Commands::Orient => cmd_orient(cli.json),
         Commands::Checkpoint { name, description } => cmd_checkpoint(name, description, cli.json),
         Commands::Undo { steps, to, dry_run } => cmd_undo(steps, to, dry_run, cli.json),
@@ -471,8 +476,12 @@ fn cmd_init(name: Option<String>, json: bool) -> Result<()> {
 fn cmd_status(json: bool) -> Result<()> {
     let mut repo = Repo::discover()?;
 
-    let change_id = repo.current_change_id().unwrap_or_else(|_| "unknown".into());
-    let operation_id = repo.current_operation_id().unwrap_or_else(|_| "unknown".into());
+    let change_id = repo
+        .current_change_id()
+        .unwrap_or_else(|_| "unknown".into());
+    let operation_id = repo
+        .current_operation_id()
+        .unwrap_or_else(|_| "unknown".into());
     let files = repo.changed_files(&change_id).unwrap_or_default();
     let has_manifest = repo.has_manifest();
 
@@ -490,7 +499,10 @@ fn cmd_status(json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
         println!("Change:    {}", &change_id[..12.min(change_id.len())]);
-        println!("Operation: {}...", &operation_id[..16.min(operation_id.len())]);
+        println!(
+            "Operation: {}...",
+            &operation_id[..16.min(operation_id.len())]
+        );
         println!("Manifest:  {}", if has_manifest { "yes" } else { "no" });
 
         if !files.is_empty() {
@@ -579,16 +591,14 @@ fn cmd_change(action: ChangeAction, json: bool) -> Result<()> {
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&changes)?);
+            } else if changes.is_empty() {
+                println!("No typed changes found");
             } else {
-                if changes.is_empty() {
-                    println!("No typed changes found");
-                } else {
-                    for change in changes {
-                        println!(
-                            "{} [{:?}] {}",
-                            change.change_id, change.change_type, change.intent
-                        );
-                    }
+                for change in changes {
+                    println!(
+                        "{} [{:?}] {}",
+                        change.change_id, change.change_type, change.intent
+                    );
                 }
             }
         }
@@ -709,8 +719,13 @@ fn cmd_apply(
                     println!("  stderr: {}", stderr);
                 }
             }
-            agentjj::intent::IntentResult::PermissionDenied { path, action, rule, .. } => {
-                println!("✗ Permission denied: {} on '{}' (rule: {})", action, path, rule);
+            agentjj::intent::IntentResult::PermissionDenied {
+                path, action, rule, ..
+            } => {
+                println!(
+                    "✗ Permission denied: {} on '{}' (rule: {})",
+                    action, path, rule
+                );
             }
             agentjj::intent::IntentResult::RequiresReview { message, paths, .. } => {
                 println!("⚠ Requires human review: {}", message);
@@ -778,10 +793,13 @@ fn cmd_symbol(path: String, signature_only: bool, json: bool) -> Result<()> {
             Some(s) => {
                 if json {
                     if signature_only {
-                        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                            "name": s.name,
-                            "signature": s.signature,
-                        }))?);
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "name": s.name,
+                                "signature": s.signature,
+                            }))?
+                        );
                     } else {
                         println!("{}", serde_json::to_string_pretty(&s)?);
                     }
@@ -822,7 +840,12 @@ fn cmd_symbol(path: String, signature_only: bool, json: bool) -> Result<()> {
                 } else {
                     sig.to_string()
                 };
-                println!("{:>4} {:10} {}", s.start_line, format!("{:?}", s.kind).to_lowercase(), truncated);
+                println!(
+                    "{:>4} {:10} {}",
+                    s.start_line,
+                    format!("{:?}", s.kind).to_lowercase(),
+                    truncated
+                );
             }
         }
     }
@@ -861,7 +884,11 @@ fn is_public_symbol(symbol: &agentjj::symbols::Symbol, lang: agentjj::SupportedL
     match lang {
         agentjj::SupportedLanguage::Rust => {
             // Rust: check for "pub" keyword in signature
-            symbol.signature.as_ref().map(|sig: &String| sig.contains("pub")).unwrap_or(false)
+            symbol
+                .signature
+                .as_ref()
+                .map(|sig: &String| sig.contains("pub"))
+                .unwrap_or(false)
         }
         agentjj::SupportedLanguage::Python => {
             // Python: underscore prefix means private (convention)
@@ -869,7 +896,11 @@ fn is_public_symbol(symbol: &agentjj::symbols::Symbol, lang: agentjj::SupportedL
         }
         agentjj::SupportedLanguage::JavaScript | agentjj::SupportedLanguage::TypeScript => {
             // JS/TS: check for "export" keyword in signature
-            symbol.signature.as_ref().map(|sig: &String| sig.contains("export")).unwrap_or(true)
+            symbol
+                .signature
+                .as_ref()
+                .map(|sig: &String| sig.contains("export"))
+                .unwrap_or(true)
         }
     }
 }
@@ -924,7 +955,10 @@ fn cmd_context(path: String, json: bool) -> Result<()> {
         }
         None => {
             if json {
-                println!(r#"{{"error": "symbol not found", "name": "{}"}}"#, symbol_name);
+                println!(
+                    r#"{{"error": "symbol not found", "name": "{}"}}"#,
+                    symbol_name
+                );
             } else {
                 println!("Symbol '{}' not found in {}", symbol_name, file_path);
             }
@@ -961,7 +995,9 @@ fn cmd_commit(message: String, _no_new: bool, json: bool) -> Result<()> {
     if !commit_output.status.success() {
         let stderr = String::from_utf8_lossy(&commit_output.stderr);
         // Check if it's just "nothing to commit"
-        if stderr.contains("nothing to commit") || String::from_utf8_lossy(&commit_output.stdout).contains("nothing to commit") {
+        if stderr.contains("nothing to commit")
+            || String::from_utf8_lossy(&commit_output.stdout).contains("nothing to commit")
+        {
             anyhow::bail!("Nothing to commit - working tree clean");
         }
         anyhow::bail!("Failed to commit: {}", stderr);
@@ -973,7 +1009,9 @@ fn cmd_commit(message: String, _no_new: bool, json: bool) -> Result<()> {
         .args(["rev-parse", "--short", "HEAD"])
         .output()?;
 
-    let commit_sha = String::from_utf8_lossy(&rev_parse.stdout).trim().to_string();
+    let commit_sha = String::from_utf8_lossy(&rev_parse.stdout)
+        .trim()
+        .to_string();
 
     if json {
         let result = serde_json::json!({
@@ -990,7 +1028,13 @@ fn cmd_commit(message: String, _no_new: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_tag(name: String, message: Option<String>, force: bool, push: bool, json: bool) -> Result<()> {
+fn cmd_tag(
+    name: String,
+    message: Option<String>,
+    force: bool,
+    push: bool,
+    json: bool,
+) -> Result<()> {
     let repo = Repo::discover()?;
 
     // Build tag command
@@ -1047,12 +1091,10 @@ fn cmd_tag(name: String, message: Option<String>, force: bool, push: bool, json:
             "forced": force,
         });
         println!("{}", serde_json::to_string_pretty(&result)?);
+    } else if push {
+        println!("✓ Tagged and pushed: {}", name);
     } else {
-        if push {
-            println!("✓ Tagged and pushed: {}", name);
-        } else {
-            println!("✓ Tagged: {}", name);
-        }
+        println!("✓ Tagged: {}", name);
     }
 
     Ok(())
@@ -1083,7 +1125,9 @@ fn cmd_push(
         anyhow::bail!("Not a git repository or no commits");
     }
 
-    let _commit_sha = String::from_utf8_lossy(&rev_parse.stdout).trim().to_string();
+    let _commit_sha = String::from_utf8_lossy(&rev_parse.stdout)
+        .trim()
+        .to_string();
 
     // Push to remote using git
     let push_output = std::process::Command::new("git")
@@ -1131,7 +1175,9 @@ fn cmd_push(
             .output()?;
 
         if pr_output.status.success() {
-            let pr_url = String::from_utf8_lossy(&pr_output.stdout).trim().to_string();
+            let pr_url = String::from_utf8_lossy(&pr_output.stdout)
+                .trim()
+                .to_string();
             result["pr_created"] = serde_json::json!(true);
             result["pr_url"] = serde_json::json!(pr_url);
 
@@ -1160,8 +1206,12 @@ fn cmd_push(
 fn cmd_orient(json: bool) -> Result<()> {
     let mut repo = Repo::discover()?;
 
-    let change_id = repo.current_change_id().unwrap_or_else(|_| "unknown".into());
-    let operation_id = repo.current_operation_id().unwrap_or_else(|_| "unknown".into());
+    let change_id = repo
+        .current_change_id()
+        .unwrap_or_else(|_| "unknown".into());
+    let operation_id = repo
+        .current_operation_id()
+        .unwrap_or_else(|_| "unknown".into());
     let files = repo.changed_files(&change_id).unwrap_or_default();
     let has_manifest = repo.has_manifest();
 
@@ -1184,11 +1234,22 @@ fn cmd_orient(json: bool) -> Result<()> {
     };
 
     // Count files by extension
-    let mut file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut file_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut total_files = 0;
 
     // Patterns to exclude from file counting
-    let exclude_patterns = [".jj", ".git", "target/", "node_modules/", ".agent/", "__pycache__", ".pyc", "venv/", ".venv/"];
+    let exclude_patterns = [
+        ".jj",
+        ".git",
+        "target/",
+        "node_modules/",
+        ".agent/",
+        "__pycache__",
+        ".pyc",
+        "venv/",
+        ".venv/",
+    ];
 
     if let Ok(entries) = glob::glob(&format!("{}/**/*", repo.root().display())) {
         for entry in entries.flatten() {
@@ -1198,7 +1259,9 @@ fn cmd_orient(json: bool) -> Result<()> {
             if entry.is_file() && !should_exclude {
                 total_files += 1;
                 if let Some(ext) = entry.extension() {
-                    *file_counts.entry(ext.to_string_lossy().to_string()).or_insert(0) += 1;
+                    *file_counts
+                        .entry(ext.to_string_lossy().to_string())
+                        .or_insert(0) += 1;
                 }
             }
         }
@@ -1207,7 +1270,13 @@ fn cmd_orient(json: bool) -> Result<()> {
     // Get recent changes
     let recent_output = std::process::Command::new("jj")
         .current_dir(repo.root())
-        .args(["log", "--limit", "5", "-T", r#"change_id ++ " " ++ description.first_line() ++ "\n""#])
+        .args([
+            "log",
+            "--limit",
+            "5",
+            "-T",
+            r#"change_id ++ " " ++ description.first_line() ++ "\n""#,
+        ])
         .output();
 
     let recent_changes: Vec<serde_json::Value> = recent_output
@@ -1221,7 +1290,7 @@ fn cmd_orient(json: bool) -> Result<()> {
                         .map(|line| {
                             let parts: Vec<&str> = line.splitn(2, ' ').collect();
                             serde_json::json!({
-                                "change_id": parts.get(0).unwrap_or(&""),
+                                "change_id": parts.first().unwrap_or(&""),
                                 "description": parts.get(1).unwrap_or(&"(no description)"),
                             })
                         })
@@ -1335,11 +1404,14 @@ fn cmd_checkpoint(name: String, description: Option<String>, json: bool) -> Resu
     std::fs::write(&checkpoint_path, serde_json::to_string_pretty(&checkpoint)?)?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "created": true,
-            "checkpoint": checkpoint,
-            "restore_command": format!("agentjj undo --to {}", name),
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "created": true,
+                "checkpoint": checkpoint,
+                "restore_command": format!("agentjj undo --to {}", name),
+            }))?
+        );
     } else {
         println!("✓ Checkpoint '{}' created", name);
         println!("  change: {}", &change_id[..12.min(change_id.len())]);
@@ -1411,28 +1483,38 @@ fn cmd_undo(steps: usize, to: Option<String>, dry_run: bool, json: bool) -> Resu
 
     // If --to is specified, restore to named checkpoint
     if let Some(checkpoint_name) = to {
-        let checkpoint_path = repo.root().join(".agent/checkpoints").join(format!("{}.json", checkpoint_name));
+        let checkpoint_path = repo
+            .root()
+            .join(".agent/checkpoints")
+            .join(format!("{}.json", checkpoint_name));
 
         if !checkpoint_path.exists() {
             anyhow::bail!("Checkpoint '{}' not found", checkpoint_name);
         }
 
-        let checkpoint_data: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&checkpoint_path)?)?;
+        let checkpoint_data: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&checkpoint_path)?)?;
         let target_op = checkpoint_data["operation_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid checkpoint: missing operation_id"))?;
 
         if dry_run {
             if json {
-                println!("{}", serde_json::json!({
-                    "dry_run": true,
-                    "checkpoint": checkpoint_name,
-                    "would_restore_to": target_op,
-                    "checkpoint_data": checkpoint_data,
-                }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "dry_run": true,
+                        "checkpoint": checkpoint_name,
+                        "would_restore_to": target_op,
+                        "checkpoint_data": checkpoint_data,
+                    })
+                );
             } else {
                 println!("Would restore to checkpoint '{}'", checkpoint_name);
-                println!("Would restore to operation: {}...", &target_op[..16.min(target_op.len())]);
+                println!(
+                    "Would restore to operation: {}...",
+                    &target_op[..16.min(target_op.len())]
+                );
             }
             return Ok(());
         }
@@ -1441,11 +1523,14 @@ fn cmd_undo(steps: usize, to: Option<String>, dry_run: bool, json: bool) -> Resu
         repo.restore_operation(target_op)?;
 
         if json {
-            println!("{}", serde_json::json!({
-                "restored": true,
-                "checkpoint": checkpoint_name,
-                "restored_to": target_op,
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "restored": true,
+                    "checkpoint": checkpoint_name,
+                    "restored_to": target_op,
+                })
+            );
         } else {
             println!("✓ Restored to checkpoint '{}'", checkpoint_name);
         }
@@ -1465,14 +1550,20 @@ fn cmd_undo(steps: usize, to: Option<String>, dry_run: bool, json: bool) -> Resu
 
     if dry_run {
         if json {
-            println!("{}", serde_json::json!({
-                "dry_run": true,
-                "would_restore_to": target_op,
-                "operations_to_undo": steps,
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "dry_run": true,
+                    "would_restore_to": target_op,
+                    "operations_to_undo": steps,
+                })
+            );
         } else {
             println!("Would undo {} operation(s)", steps);
-            println!("Would restore to operation: {}...", &target_op[..16.min(target_op.len())]);
+            println!(
+                "Would restore to operation: {}...",
+                &target_op[..16.min(target_op.len())]
+            );
         }
         return Ok(());
     }
@@ -1481,11 +1572,14 @@ fn cmd_undo(steps: usize, to: Option<String>, dry_run: bool, json: bool) -> Resu
     repo.restore_operation(target_op)?;
 
     if json {
-        println!("{}", serde_json::json!({
-            "undone": true,
-            "steps": steps,
-            "restored_to": target_op,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "undone": true,
+                "steps": steps,
+                "restored_to": target_op,
+            })
+        );
     } else {
         println!("✓ Undid {} operation(s)", steps);
     }
@@ -1521,14 +1615,17 @@ fn cmd_bulk(action: BulkAction, json: bool) -> Result<()> {
             }
 
             if json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "files": results,
-                    "errors": errors,
-                    "summary": {
-                        "read": results.len(),
-                        "failed": errors.len(),
-                    }
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "files": results,
+                        "errors": errors,
+                        "summary": {
+                            "read": results.len(),
+                            "failed": errors.len(),
+                        }
+                    }))?
+                );
             } else {
                 for r in &results {
                     println!("=== {} ({} lines) ===", r["path"], r["lines"]);
@@ -1541,7 +1638,10 @@ fn cmd_bulk(action: BulkAction, json: bool) -> Result<()> {
             }
         }
 
-        BulkAction::Symbols { pattern, public_only } => {
+        BulkAction::Symbols {
+            pattern,
+            public_only,
+        } => {
             let mut all_symbols = Vec::new();
 
             // Use glob to find matching files
@@ -1551,8 +1651,11 @@ fn cmd_bulk(action: BulkAction, json: bool) -> Result<()> {
                     if entry.is_file() {
                         if let Some(lang) = agentjj::SupportedLanguage::from_path(&entry) {
                             if let Ok(content) = std::fs::read_to_string(&entry) {
-                                if let Ok(symbols) = agentjj::symbols::extract_symbols(&content, lang) {
-                                    let rel_path = entry.strip_prefix(repo.root()).unwrap_or(&entry);
+                                if let Ok(symbols) =
+                                    agentjj::symbols::extract_symbols(&content, lang)
+                                {
+                                    let rel_path =
+                                        entry.strip_prefix(repo.root()).unwrap_or(&entry);
                                     for s in symbols {
                                         if !public_only || is_public_symbol(&s, lang) {
                                             all_symbols.push(serde_json::json!({
@@ -1572,16 +1675,25 @@ fn cmd_bulk(action: BulkAction, json: bool) -> Result<()> {
             }
 
             if json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "pattern": pattern,
-                    "symbols": all_symbols,
-                    "count": all_symbols.len(),
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "pattern": pattern,
+                        "symbols": all_symbols,
+                        "count": all_symbols.len(),
+                    }))?
+                );
             } else {
-                println!("Found {} symbols matching '{}':", all_symbols.len(), pattern);
+                println!(
+                    "Found {} symbols matching '{}':",
+                    all_symbols.len(),
+                    pattern
+                );
                 for s in &all_symbols {
-                    println!("  {}::{} ({:?}, line {})",
-                        s["file"], s["name"], s["kind"], s["line"]);
+                    println!(
+                        "  {}::{} ({:?}, line {})",
+                        s["file"], s["name"], s["kind"], s["line"]
+                    );
                 }
             }
         }
@@ -1599,12 +1711,17 @@ fn cmd_bulk(action: BulkAction, json: bool) -> Result<()> {
                         let content_result: Result<String> = if file_path_obj.is_absolute() {
                             std::fs::read_to_string(file_path).map_err(|e| anyhow::anyhow!("{}", e))
                         } else {
-                            repo.read_file(file_path, None).map_err(|e| anyhow::anyhow!("{}", e))
+                            repo.read_file(file_path, None)
+                                .map_err(|e| anyhow::anyhow!("{}", e))
                         };
 
                         match content_result {
                             Ok(content) => {
-                                match agentjj::symbols::get_symbol_context(&content, lang, symbol_name) {
+                                match agentjj::symbols::get_symbol_context(
+                                    &content,
+                                    lang,
+                                    symbol_name,
+                                ) {
                                     Ok(Some(ctx)) => {
                                         results.push(serde_json::json!({
                                             "path": sym_path,
@@ -1647,10 +1764,13 @@ fn cmd_bulk(action: BulkAction, json: bool) -> Result<()> {
             }
 
             if json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "contexts": results,
-                    "errors": errors,
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "contexts": results,
+                        "errors": errors,
+                    }))?
+                );
             } else {
                 for r in &results {
                     println!("=== {} ===", r["path"]);
@@ -1679,7 +1799,10 @@ fn cmd_files(pattern: Option<String>, with_symbols: bool, json: bool) -> Result<
 
     if let Ok(entries) = glob::glob(&full_pattern) {
         for entry in entries.flatten() {
-            if entry.is_file() && !entry.to_string_lossy().contains(".jj") && !entry.to_string_lossy().contains(".git") {
+            if entry.is_file()
+                && !entry.to_string_lossy().contains(".jj")
+                && !entry.to_string_lossy().contains(".git")
+            {
                 let rel_path = entry.strip_prefix(repo.root()).unwrap_or(&entry);
                 let ext = entry.extension().map(|e| e.to_string_lossy().to_string());
                 let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
@@ -1695,9 +1818,10 @@ fn cmd_files(pattern: Option<String>, with_symbols: bool, json: bool) -> Result<
                         if let Ok(content) = std::fs::read_to_string(&entry) {
                             if let Ok(symbols) = agentjj::symbols::extract_symbols(&content, lang) {
                                 file_info["symbol_count"] = serde_json::json!(symbols.len());
-                                file_info["symbols"] = serde_json::json!(
-                                    symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
-                                );
+                                file_info["symbols"] = serde_json::json!(symbols
+                                    .iter()
+                                    .map(|s| &s.name)
+                                    .collect::<Vec<_>>());
                             }
                         }
                     }
@@ -1709,11 +1833,14 @@ fn cmd_files(pattern: Option<String>, with_symbols: bool, json: bool) -> Result<
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "pattern": glob_pattern,
-            "files": files,
-            "count": files.len(),
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "pattern": glob_pattern,
+                "files": files,
+                "count": files.len(),
+            }))?
+        );
     } else {
         println!("Files matching '{}':", glob_pattern);
         for f in &files {
@@ -1824,17 +1951,20 @@ fn cmd_diff(against: Option<String>, explain: bool, json: bool) -> Result<()> {
     };
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "against": target,
-            "files_changed": files_changed,
-            "stats": {
-                "additions": additions,
-                "deletions": deletions,
-                "net": additions as i64 - deletions as i64,
-            },
-            "explanation": semantic_summary,
-            "raw_diff": raw_diff,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "against": target,
+                "files_changed": files_changed,
+                "stats": {
+                    "additions": additions,
+                    "deletions": deletions,
+                    "net": additions as i64 - deletions as i64,
+                },
+                "explanation": semantic_summary,
+                "raw_diff": raw_diff,
+            }))?
+        );
     } else {
         println!("Diff against {}:", target);
         println!("  {} file(s) changed", files_changed.len());
@@ -1897,7 +2027,9 @@ fn cmd_affected(symbol_path: String, depth: usize, json: bool) -> Result<()> {
 
     // Sort by occurrences (most affected first)
     affected_files.sort_by(|a, b| {
-        b["occurrences"].as_u64().unwrap_or(0)
+        b["occurrences"]
+            .as_u64()
+            .unwrap_or(0)
             .cmp(&a["occurrences"].as_u64().unwrap_or(0))
     });
 
@@ -1931,7 +2063,11 @@ fn cmd_affected(symbol_path: String, depth: usize, json: bool) -> Result<()> {
         println!();
 
         for f in affected_files.iter().take(10) {
-            let marker = if f["is_definition"].as_bool().unwrap_or(false) { "(def)" } else { "" };
+            let marker = if f["is_definition"].as_bool().unwrap_or(false) {
+                "(def)"
+            } else {
+                ""
+            };
             println!("  {} ({} refs) {}", f["path"], f["occurrences"], marker);
         }
 
@@ -2037,18 +2173,19 @@ fn cmd_schema(type_filter: Option<String>, json: bool) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(schema)?);
             }
         } else {
-            anyhow::bail!("Unknown type: {}. Available: status, symbol, context, apply_result, error, orient", type_name);
+            anyhow::bail!(
+                "Unknown type: {}. Available: status, symbol, context, apply_result, error, orient",
+                type_name
+            );
         }
+    } else if json {
+        println!("{}", serde_json::to_string_pretty(&schemas)?);
     } else {
-        if json {
-            println!("{}", serde_json::to_string_pretty(&schemas)?);
-        } else {
-            println!("Available schemas:");
-            for key in schemas.as_object().unwrap().keys() {
-                println!("  {}", key);
-            }
-            println!("\nUse --type <name> to see a specific schema");
+        println!("Available schemas:");
+        for key in schemas.as_object().unwrap().keys() {
+            println!("  {}", key);
         }
+        println!("\nUse --type <name> to see a specific schema");
     }
 
     Ok(())
@@ -2085,8 +2222,15 @@ fn cmd_validate(json: bool) -> Result<()> {
         let path = std::path::Path::new(file);
 
         // Check for test files if code was changed
-        if path.extension().map(|e| e == "rs" || e == "py" || e == "ts" || e == "js").unwrap_or(false) {
-            let is_test = file.contains("test") || file.contains("spec") || file.contains("_test.") || file.contains(".test.");
+        if path
+            .extension()
+            .map(|e| e == "rs" || e == "py" || e == "ts" || e == "js")
+            .unwrap_or(false)
+        {
+            let is_test = file.contains("test")
+                || file.contains("spec")
+                || file.contains("_test.")
+                || file.contains(".test.");
             if !is_test {
                 // For Rust files, tests are often inline (mod tests) - skip warning
                 // For other languages, check common test locations
@@ -2126,14 +2270,17 @@ fn cmd_validate(json: bool) -> Result<()> {
     let is_valid = issues.is_empty();
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "valid": is_valid,
-            "change_id": change_id,
-            "files_changed": files,
-            "typed_change": typed_change,
-            "issues": issues,
-            "warnings": warnings,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "valid": is_valid,
+                "change_id": change_id,
+                "files_changed": files,
+                "typed_change": typed_change,
+                "issues": issues,
+                "warnings": warnings,
+            }))?
+        );
     } else {
         if is_valid {
             println!("✓ Changes are valid");
@@ -2177,7 +2324,10 @@ fn cmd_graph(format: String, limit: usize, all: bool, json: bool) -> Result<()> 
         "ascii" => cmd_graph_ascii(&mut repo, limit, all, json),
         "mermaid" => cmd_graph_mermaid(&mut repo, limit, all, json),
         "dot" => cmd_graph_dot(&mut repo, limit, all, json),
-        _ => anyhow::bail!("Unknown format: {}. Use 'ascii', 'mermaid', or 'dot'", format),
+        _ => anyhow::bail!(
+            "Unknown format: {}. Use 'ascii', 'mermaid', or 'dot'",
+            format
+        ),
     }
 }
 
@@ -2212,15 +2362,18 @@ fn cmd_graph_ascii(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Resu
     if json {
         // For JSON mode, also get structured nodes
         let nodes = get_graph_nodes(repo, limit, all).unwrap_or_default();
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "format": "ascii",
-            "diagram": ascii_output,
-            "nodes": nodes.iter().map(|n| serde_json::json!({
-                "id": n.id,
-                "description": n.description,
-                "parents": n.parents,
-            })).collect::<Vec<_>>(),
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "format": "ascii",
+                "diagram": ascii_output,
+                "nodes": nodes.iter().map(|n| serde_json::json!({
+                    "id": n.id,
+                    "description": n.description,
+                    "parents": n.parents,
+                })).collect::<Vec<_>>(),
+            }))?
+        );
     } else {
         print!("{}", ascii_output);
     }
@@ -2237,9 +2390,7 @@ fn cmd_graph_mermaid(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Re
 
     for node in &nodes {
         // Escape quotes in description and truncate
-        let desc = node.description
-            .replace('"', "'")
-            .replace('\n', " ");
+        let desc = node.description.replace('"', "'").replace('\n', " ");
         let truncated_desc = if desc.len() > 40 {
             format!("{}...", &desc[..37])
         } else {
@@ -2256,15 +2407,18 @@ fn cmd_graph_mermaid(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Re
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "format": "mermaid",
-            "diagram": diagram,
-            "nodes": nodes.iter().map(|n| serde_json::json!({
-                "id": n.id,
-                "description": n.description,
-                "parents": n.parents,
-            })).collect::<Vec<_>>(),
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "format": "mermaid",
+                "diagram": diagram,
+                "nodes": nodes.iter().map(|n| serde_json::json!({
+                    "id": n.id,
+                    "description": n.description,
+                    "parents": n.parents,
+                })).collect::<Vec<_>>(),
+            }))?
+        );
     } else {
         print!("{}", diagram);
     }
@@ -2283,9 +2437,7 @@ fn cmd_graph_dot(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result
 
     for node in &nodes {
         // Escape quotes in description and truncate
-        let desc = node.description
-            .replace('"', "\\\"")
-            .replace('\n', "\\n");
+        let desc = node.description.replace('"', "\\\"").replace('\n', "\\n");
         let truncated_desc = if desc.len() > 40 {
             format!("{}...", &desc[..37])
         } else {
@@ -2293,7 +2445,10 @@ fn cmd_graph_dot(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result
         };
 
         // Node definition
-        diagram.push_str(&format!("  \"{}\" [label=\"{}\\n{}\"];\n", node.id, node.id, truncated_desc));
+        diagram.push_str(&format!(
+            "  \"{}\" [label=\"{}\\n{}\"];\n",
+            node.id, node.id, truncated_desc
+        ));
 
         // Edges to parents
         for parent_id in &node.parents {
@@ -2304,15 +2459,18 @@ fn cmd_graph_dot(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result
     diagram.push_str("}\n");
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "format": "dot",
-            "diagram": diagram,
-            "nodes": nodes.iter().map(|n| serde_json::json!({
-                "id": n.id,
-                "description": n.description,
-                "parents": n.parents,
-            })).collect::<Vec<_>>(),
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "format": "dot",
+                "diagram": diagram,
+                "nodes": nodes.iter().map(|n| serde_json::json!({
+                    "id": n.id,
+                    "description": n.description,
+                    "parents": n.parents,
+                })).collect::<Vec<_>>(),
+            }))?
+        );
     } else {
         print!("{}", diagram);
     }
@@ -2382,15 +2540,18 @@ fn cmd_suggest(json: bool) -> Result<()> {
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "current_state": {
-                "change_id": &change_id[..12.min(change_id.len())],
-                "files_changed": files.len(),
-                "has_manifest": has_manifest,
-                "has_typed_change": typed_change.is_some(),
-            },
-            "suggestions": suggestions,
-        }))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "current_state": {
+                    "change_id": &change_id[..12.min(change_id.len())],
+                    "files_changed": files.len(),
+                    "has_manifest": has_manifest,
+                    "has_typed_change": typed_change.is_some(),
+                },
+                "suggestions": suggestions,
+            }))?
+        );
     } else {
         println!("=== Suggested Actions ===\n");
 
@@ -2429,17 +2590,26 @@ mod tests {
 
     #[test]
     fn test_is_leap_year_divisible_by_400() {
-        assert!(is_leap_year(2000), "2000 should be a leap year (divisible by 400)");
+        assert!(
+            is_leap_year(2000),
+            "2000 should be a leap year (divisible by 400)"
+        );
     }
 
     #[test]
     fn test_is_leap_year_not_divisible_by_400_but_by_100() {
-        assert!(!is_leap_year(1900), "1900 should not be a leap year (divisible by 100 but not 400)");
+        assert!(
+            !is_leap_year(1900),
+            "1900 should not be a leap year (divisible by 100 but not 400)"
+        );
     }
 
     #[test]
     fn test_is_leap_year_divisible_by_4() {
-        assert!(is_leap_year(2024), "2024 should be a leap year (divisible by 4)");
+        assert!(
+            is_leap_year(2024),
+            "2024 should be a leap year (divisible by 4)"
+        );
     }
 
     #[test]
@@ -2449,44 +2619,86 @@ mod tests {
 
     #[test]
     fn test_parse_change_type_behavioral() {
-        assert!(matches!(parse_change_type("behavioral").unwrap(), ChangeType::Behavioral));
-        assert!(matches!(parse_change_type("behavior").unwrap(), ChangeType::Behavioral));
-        assert!(matches!(parse_change_type("BEHAVIORAL").unwrap(), ChangeType::Behavioral));
+        assert!(matches!(
+            parse_change_type("behavioral").unwrap(),
+            ChangeType::Behavioral
+        ));
+        assert!(matches!(
+            parse_change_type("behavior").unwrap(),
+            ChangeType::Behavioral
+        ));
+        assert!(matches!(
+            parse_change_type("BEHAVIORAL").unwrap(),
+            ChangeType::Behavioral
+        ));
     }
 
     #[test]
     fn test_parse_change_type_refactor() {
-        assert!(matches!(parse_change_type("refactor").unwrap(), ChangeType::Refactor));
+        assert!(matches!(
+            parse_change_type("refactor").unwrap(),
+            ChangeType::Refactor
+        ));
     }
 
     #[test]
     fn test_parse_change_type_schema() {
-        assert!(matches!(parse_change_type("schema").unwrap(), ChangeType::Schema));
+        assert!(matches!(
+            parse_change_type("schema").unwrap(),
+            ChangeType::Schema
+        ));
     }
 
     #[test]
     fn test_parse_change_type_docs() {
-        assert!(matches!(parse_change_type("docs").unwrap(), ChangeType::Docs));
-        assert!(matches!(parse_change_type("doc").unwrap(), ChangeType::Docs));
+        assert!(matches!(
+            parse_change_type("docs").unwrap(),
+            ChangeType::Docs
+        ));
+        assert!(matches!(
+            parse_change_type("doc").unwrap(),
+            ChangeType::Docs
+        ));
     }
 
     #[test]
     fn test_parse_change_type_deps() {
-        assert!(matches!(parse_change_type("deps").unwrap(), ChangeType::Deps));
-        assert!(matches!(parse_change_type("dependency").unwrap(), ChangeType::Deps));
-        assert!(matches!(parse_change_type("dependencies").unwrap(), ChangeType::Deps));
+        assert!(matches!(
+            parse_change_type("deps").unwrap(),
+            ChangeType::Deps
+        ));
+        assert!(matches!(
+            parse_change_type("dependency").unwrap(),
+            ChangeType::Deps
+        ));
+        assert!(matches!(
+            parse_change_type("dependencies").unwrap(),
+            ChangeType::Deps
+        ));
     }
 
     #[test]
     fn test_parse_change_type_config() {
-        assert!(matches!(parse_change_type("config").unwrap(), ChangeType::Config));
-        assert!(matches!(parse_change_type("configuration").unwrap(), ChangeType::Config));
+        assert!(matches!(
+            parse_change_type("config").unwrap(),
+            ChangeType::Config
+        ));
+        assert!(matches!(
+            parse_change_type("configuration").unwrap(),
+            ChangeType::Config
+        ));
     }
 
     #[test]
     fn test_parse_change_type_test() {
-        assert!(matches!(parse_change_type("test").unwrap(), ChangeType::Test));
-        assert!(matches!(parse_change_type("tests").unwrap(), ChangeType::Test));
+        assert!(matches!(
+            parse_change_type("test").unwrap(),
+            ChangeType::Test
+        ));
+        assert!(matches!(
+            parse_change_type("tests").unwrap(),
+            ChangeType::Test
+        ));
     }
 
     #[test]
@@ -2498,42 +2710,78 @@ mod tests {
 
     #[test]
     fn test_parse_category_feature() {
-        assert!(matches!(parse_category("feature").unwrap(), ChangeCategory::Feature));
-        assert!(matches!(parse_category("feat").unwrap(), ChangeCategory::Feature));
+        assert!(matches!(
+            parse_category("feature").unwrap(),
+            ChangeCategory::Feature
+        ));
+        assert!(matches!(
+            parse_category("feat").unwrap(),
+            ChangeCategory::Feature
+        ));
     }
 
     #[test]
     fn test_parse_category_fix() {
-        assert!(matches!(parse_category("fix").unwrap(), ChangeCategory::Fix));
-        assert!(matches!(parse_category("bugfix").unwrap(), ChangeCategory::Fix));
+        assert!(matches!(
+            parse_category("fix").unwrap(),
+            ChangeCategory::Fix
+        ));
+        assert!(matches!(
+            parse_category("bugfix").unwrap(),
+            ChangeCategory::Fix
+        ));
     }
 
     #[test]
     fn test_parse_category_perf() {
-        assert!(matches!(parse_category("perf").unwrap(), ChangeCategory::Perf));
-        assert!(matches!(parse_category("performance").unwrap(), ChangeCategory::Perf));
+        assert!(matches!(
+            parse_category("perf").unwrap(),
+            ChangeCategory::Perf
+        ));
+        assert!(matches!(
+            parse_category("performance").unwrap(),
+            ChangeCategory::Perf
+        ));
     }
 
     #[test]
     fn test_parse_category_security() {
-        assert!(matches!(parse_category("security").unwrap(), ChangeCategory::Security));
-        assert!(matches!(parse_category("sec").unwrap(), ChangeCategory::Security));
+        assert!(matches!(
+            parse_category("security").unwrap(),
+            ChangeCategory::Security
+        ));
+        assert!(matches!(
+            parse_category("sec").unwrap(),
+            ChangeCategory::Security
+        ));
     }
 
     #[test]
     fn test_parse_category_breaking() {
-        assert!(matches!(parse_category("breaking").unwrap(), ChangeCategory::Breaking));
+        assert!(matches!(
+            parse_category("breaking").unwrap(),
+            ChangeCategory::Breaking
+        ));
     }
 
     #[test]
     fn test_parse_category_deprecation() {
-        assert!(matches!(parse_category("deprecation").unwrap(), ChangeCategory::Deprecation));
-        assert!(matches!(parse_category("deprecate").unwrap(), ChangeCategory::Deprecation));
+        assert!(matches!(
+            parse_category("deprecation").unwrap(),
+            ChangeCategory::Deprecation
+        ));
+        assert!(matches!(
+            parse_category("deprecate").unwrap(),
+            ChangeCategory::Deprecation
+        ));
     }
 
     #[test]
     fn test_parse_category_chore() {
-        assert!(matches!(parse_category("chore").unwrap(), ChangeCategory::Chore));
+        assert!(matches!(
+            parse_category("chore").unwrap(),
+            ChangeCategory::Chore
+        ));
     }
 
     #[test]

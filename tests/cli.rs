@@ -7,18 +7,32 @@ use tempfile::TempDir;
 
 /// Helper to get a Command for the agentjj binary.
 /// Uses the crate target dir to locate the binary built by cargo.
+#[allow(deprecated)]
 fn agentjj() -> assert_cmd::Command {
     assert_cmd::Command::cargo_bin("agentjj").unwrap()
 }
 
-/// Helper to create a temporary jj repository for tests that require one.
-/// Uses `jj git init` which is the standard way to initialize a jj repository.
+/// Helper to create a temporary git repository for tests that require one.
+/// agentjj auto-colocates with git repos, so we use git init.
 fn setup_temp_jj_repo() -> Option<TempDir> {
     let tmp = TempDir::new().ok()?;
 
-    // Initialize a jj repository with git backend
-    let status = Command::new("jj")
-        .args(["git", "init"])
+    // Initialize a git repository - agentjj will auto-colocate
+    let status = Command::new("git")
+        .args(["init"])
+        .current_dir(tmp.path())
+        .status()
+        .ok()?;
+
+    // Configure git user for commits
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(tmp.path())
+        .status()
+        .ok()?;
+
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
         .current_dir(tmp.path())
         .status()
         .ok()?;
@@ -43,7 +57,9 @@ fn help_returns_success_and_shows_usage() {
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Agent-oriented porcelain for Jujutsu"))
+        .stdout(predicate::str::contains(
+            "Agent-oriented porcelain for Jujutsu",
+        ))
         .stdout(predicate::str::contains("Usage:"))
         .stdout(predicate::str::contains("Commands:"));
 }
@@ -106,8 +122,8 @@ fn json_status_in_non_repo_returns_json_error() {
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
 
     // Parse as JSON to validate format
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("Output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
 
     assert_eq!(json["error"], true, "JSON should have error: true");
     assert!(
@@ -142,7 +158,7 @@ fn orient_in_jj_repo_succeeds() {
         .stdout(predicate::str::contains("Repository Orientation").or(
             // In text mode it shows "Repository Orientation"
             // but we also accept if it just runs without error
-            predicate::str::contains("Current change")
+            predicate::str::contains("Current change"),
         ));
 }
 
@@ -162,8 +178,8 @@ fn orient_json_returns_valid_structure() {
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
 
     // Parse as JSON to validate format
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("Output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
 
     // Verify expected structure
     assert!(
@@ -212,45 +228,27 @@ fn schema_returns_success() {
 
 #[test]
 fn schema_json_returns_valid_json() {
-    let output = agentjj()
-        .args(["--json", "schema"])
-        .assert()
-        .success();
+    let output = agentjj().args(["--json", "schema"]).assert().success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
 
     // Parse as JSON to validate
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("Schema output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Schema output should be valid JSON");
 
     // Should be an object with schema definitions
     assert!(json.is_object(), "Schema should return a JSON object");
 
     // Verify expected schemas are present
-    assert!(
-        json["status"].is_object(),
-        "Should have status schema"
-    );
-    assert!(
-        json["symbol"].is_object(),
-        "Should have symbol schema"
-    );
-    assert!(
-        json["context"].is_object(),
-        "Should have context schema"
-    );
+    assert!(json["status"].is_object(), "Should have status schema");
+    assert!(json["symbol"].is_object(), "Should have symbol schema");
+    assert!(json["context"].is_object(), "Should have context schema");
     assert!(
         json["apply_result"].is_object(),
         "Should have apply_result schema"
     );
-    assert!(
-        json["error"].is_object(),
-        "Should have error schema"
-    );
-    assert!(
-        json["orient"].is_object(),
-        "Should have orient schema"
-    );
+    assert!(json["error"].is_object(), "Should have error schema");
+    assert!(json["orient"].is_object(), "Should have orient schema");
 }
 
 #[test]
@@ -261,8 +259,8 @@ fn schema_type_filter_works() {
         .success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("Schema output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Schema output should be valid JSON");
 
     // Should return just the status schema
     assert!(
@@ -302,7 +300,10 @@ fn json_flag_is_global() {
     // Even on failure, output should be JSON
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     let json: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
-    assert!(json.is_ok(), "Error output with --json should be valid JSON");
+    assert!(
+        json.is_ok(),
+        "Error output with --json should be valid JSON"
+    );
 }
 
 #[test]
@@ -334,18 +335,12 @@ fn status_json_returns_valid_structure() {
         .success();
 
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("Status output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Status output should be valid JSON");
 
     // Verify expected fields
-    assert!(
-        json["change_id"].is_string(),
-        "Should have change_id"
-    );
-    assert!(
-        json["operation_id"].is_string(),
-        "Should have operation_id"
-    );
+    assert!(json["change_id"].is_string(), "Should have change_id");
+    assert!(json["operation_id"].is_string(), "Should have operation_id");
     assert!(
         json["files_changed"].is_array(),
         "Should have files_changed array"

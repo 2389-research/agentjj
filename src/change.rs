@@ -109,7 +109,11 @@ pub enum InvariantStatus {
 
 impl TypedChange {
     /// Create a new typed change
-    pub fn new(change_id: impl Into<String>, change_type: ChangeType, intent: impl Into<String>) -> Self {
+    pub fn new(
+        change_id: impl Into<String>,
+        change_type: ChangeType,
+        intent: impl Into<String>,
+    ) -> Self {
         Self {
             change_id: change_id.into(),
             change_type,
@@ -155,7 +159,9 @@ impl TypedChange {
 
     /// Load typed change by change ID from repo
     pub fn load_from_repo(repo_root: impl AsRef<Path>, change_id: &str) -> Result<Self> {
-        let path = repo_root.as_ref().join(format!(".agent/changes/{}.toml", change_id));
+        let path = repo_root
+            .as_ref()
+            .join(format!(".agent/changes/{}.toml", change_id));
         if !path.exists() {
             return Err(Error::ChangeNotFound {
                 change_id: change_id.to_string(),
@@ -252,7 +258,10 @@ mod tests {
     fn create_typed_change() {
         let change = TypedChange::new("qpvuntsm", ChangeType::Behavioral, "Add retry logic")
             .with_category(ChangeCategory::Feature)
-            .with_files(vec!["src/webhook.py".into(), "tests/test_webhook.py".into()]);
+            .with_files(vec![
+                "src/webhook.py".into(),
+                "tests/test_webhook.py".into(),
+            ]);
 
         assert_eq!(change.change_id, "qpvuntsm");
         assert_eq!(change.change_type, ChangeType::Behavioral);

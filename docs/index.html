@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>agentjj - the version control for agents</title>
+    <meta name="description" content="Agent-first version control. A porcelain for Jujutsu designed to make AI agents love source control.">
+
+    <!-- Fonts (matching moltbook's IBM Plex Mono) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg: #fafafa;
+            --bg-alt: #f4f4f5;
+            --text: #18181b;
+            --text-muted: #71717a;
+            --border: #e4e4e7;
+            --accent: #22c55e;
+            --accent-hover: #16a34a;
+            --font: 'IBM Plex Mono', monospace;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        /* Navigation */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .nav-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+            font-size: 1.25rem;
+        }
+
+        .nav-logo-icon {
+            font-size: 1.5rem;
+        }
+
+        .beta-badge {
+            font-size: 0.625rem;
+            background: var(--accent);
+            color: white;
+            padding: 0.125rem 0.375rem;
+            border-radius: 4px;
+            font-weight: 500;
+            vertical-align: super;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1.5rem;
+            font-size: 0.875rem;
+        }
+
+        .nav-links a:hover {
+            color: var(--accent);
+        }
+
+        /* Hero */
+        .hero {
+            text-align: center;
+            padding: 4rem 2rem 3rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .hero-logo {
+            font-size: 6rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .hero-tagline {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            max-width: 400px;
+            margin: 0 auto 2rem;
+        }
+
+        /* Dual CTA Buttons */
+        .cta-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .cta-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            font-family: var(--font);
+            font-size: 0.9rem;
+            font-weight: 500;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .cta-btn:hover {
+            border-color: var(--accent);
+            background: var(--bg-alt);
+        }
+
+        .cta-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        .cta-btn.primary:hover {
+            background: var(--accent-hover);
+            border-color: var(--accent-hover);
+        }
+
+        /* Stats */
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 3rem;
+            padding: 2rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-alt);
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* Content Sections */
+        .content {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .section {
+            margin-bottom: 3rem;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .section-title {
+            font-size: 0.875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .section-link {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .section-link:hover {
+            color: var(--accent);
+        }
+
+        /* Cards */
+        .card {
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+        }
+
+        .card:hover {
+            border-color: var(--accent);
+        }
+
+        .card-title {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .card-desc {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Code Block */
+        .code-block {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border-radius: 8px;
+            padding: 1rem;
+            font-size: 0.8rem;
+            overflow-x: auto;
+            margin-top: 1rem;
+        }
+
+        .code-block .comment { color: #6a9955; }
+        .code-block .command { color: #9cdcfe; }
+        .code-block .flag { color: #ce9178; }
+
+        /* Agent/Human Sections */
+        .audience-section {
+            background: var(--bg-alt);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .audience-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .audience-header span {
+            font-size: 1.25rem;
+        }
+
+        .audience-desc {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+        }
+
+        /* Install Options */
+        .install-option {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .install-label {
+            color: var(--text-muted);
+            min-width: 80px;
+        }
+
+        .install-cmd {
+            color: var(--accent);
+            flex: 1;
+        }
+
+        /* Comparison */
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .comparison-header {
+            font-weight: 600;
+            padding: 0.5rem;
+            background: var(--bg-alt);
+            border-radius: 4px;
+        }
+
+        .comparison-row {
+            display: contents;
+        }
+
+        .comparison-old {
+            color: var(--text-muted);
+            padding: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .comparison-new {
+            color: var(--accent);
+            padding: 0.5rem;
+            border-bottom: 1px solid var(--border);
+            font-weight: 500;
+        }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 2rem;
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        footer a {
+            color: var(--text);
+        }
+
+        footer a:hover {
+            color: var(--accent);
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .footer-credit {
+            margin-top: 1rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .stats {
+                flex-wrap: wrap;
+                gap: 1.5rem;
+            }
+
+            .comparison {
+                grid-template-columns: 1fr;
+            }
+
+            .comparison-header:last-child,
+            .comparison-new {
+                display: none;
+            }
+
+            .nav-links {
+                gap: 1rem;
+                font-size: 0.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="#" class="nav-logo">
+            <span class="nav-logo-icon">🔀</span>
+            agentjj <span class="beta-badge">beta</span>
+        </a>
+        <div class="nav-links">
+            <a href="#commands">Commands</a>
+            <a href="https://github.com/2389-research/agentjj">GitHub</a>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-logo">🔀</div>
+        <h1>Version Control for AI Agents</h1>
+        <p class="hero-tagline">
+            Where AI agents checkpoint, undo, and commit. Humans welcome to install.
+        </p>
+        <div class="cta-buttons">
+            <a href="#for-humans" class="cta-btn">👤 I'm a Human</a>
+            <a href="#for-agents" class="cta-btn primary">🤖 I'm an Agent</a>
+        </div>
+    </section>
+
+    <section class="stats">
+        <div class="stat">
+            <div class="stat-value">4</div>
+            <div class="stat-label">Languages</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">20+</div>
+            <div class="stat-label">Commands</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">0</div>
+            <div class="stat-label">Dependencies</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">100%</div>
+            <div class="stat-label">Git Compatible</div>
+        </div>
+    </section>
+
+    <div class="content">
+        <section class="section" id="for-agents">
+            <div class="section-header">
+                <span class="section-title">🤖 For Agents</span>
+                <a href="https://github.com/2389-research/agentjj#commands" class="section-link">View All Commands →</a>
+            </div>
+            <div class="audience-section">
+                <div class="audience-header">
+                    <span>🤖</span> Connect Your Agent
+                </div>
+                <p class="audience-desc">
+                    JSON-first output, bulk operations, typed changes, checkpoints with undo. Everything you need to manipulate code safely.
+                </p>
+                <div class="code-block">
+<span class="comment"># Add to your agent's toolkit</span>
+<span class="command">agentjj</span> <span class="flag">--json</span> orient        <span class="comment"># Get complete repo briefing</span>
+<span class="command">agentjj</span> <span class="flag">--json</span> status        <span class="comment"># Current state as structured data</span>
+<span class="command">agentjj</span> <span class="flag">--json</span> bulk read src/*.rs
+<span class="command">agentjj</span> checkpoint before-refactor
+<span class="command">agentjj</span> undo <span class="flag">--to</span> before-refactor
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="for-humans">
+            <div class="section-header">
+                <span class="section-title">👤 For Humans</span>
+                <a href="https://github.com/2389-research/agentjj/releases" class="section-link">View Releases →</a>
+            </div>
+            <div class="audience-section">
+                <div class="audience-header">
+                    <span>👤</span> Install agentjj
+                </div>
+                <p class="audience-desc">
+                    Give your AI assistants proper version control superpowers. Git continues to work normally—agentjj colocates seamlessly.
+                </p>
+                <div class="install-option">
+                    <span class="install-label">Homebrew</span>
+                    <code class="install-cmd">brew install 2389-research/tap/agentjj</code>
+                </div>
+                <div class="install-option">
+                    <span class="install-label">Cargo</span>
+                    <code class="install-cmd">cargo install agentjj</code>
+                </div>
+                <div class="install-option">
+                    <span class="install-label">Binary</span>
+                    <a href="https://github.com/2389-research/agentjj/releases" class="install-cmd">Download from GitHub Releases →</a>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="commands">
+            <div class="section-header">
+                <span class="section-title">Commands</span>
+            </div>
+            <div class="card">
+                <div class="card-title">agentjj orient</div>
+                <div class="card-desc">Complete repo briefing. Start here.</div>
+            </div>
+            <div class="card">
+                <div class="card-title">agentjj checkpoint &lt;name&gt;</div>
+                <div class="card-desc">Create a restore point before risky changes.</div>
+            </div>
+            <div class="card">
+                <div class="card-title">agentjj undo --to &lt;name&gt;</div>
+                <div class="card-desc">Restore to a previous checkpoint.</div>
+            </div>
+            <div class="card">
+                <div class="card-title">agentjj bulk read &lt;files...&gt;</div>
+                <div class="card-desc">Read multiple files in one command.</div>
+            </div>
+            <div class="card">
+                <div class="card-title">agentjj symbol &lt;file&gt;</div>
+                <div class="card-desc">List all symbols in a file (functions, classes, etc).</div>
+            </div>
+            <div class="card">
+                <div class="card-title">agentjj validate</div>
+                <div class="card-desc">Check changes are ready to push.</div>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-header">
+                <span class="section-title">Why agentjj?</span>
+            </div>
+            <div class="comparison">
+                <div class="comparison-header">Human VCS</div>
+                <div class="comparison-header">Agent VCS</div>
+
+                <div class="comparison-old">Interactive prompts</div>
+                <div class="comparison-new">JSON-first output</div>
+
+                <div class="comparison-old">Visual diffs</div>
+                <div class="comparison-new">Structured change data</div>
+
+                <div class="comparison-old">Manual commits</div>
+                <div class="comparison-new">Typed changes with intent</div>
+
+                <div class="comparison-old">Hope you remember</div>
+                <div class="comparison-new">Checkpoints + undo</div>
+
+                <div class="comparison-old">One file at a time</div>
+                <div class="comparison-new">Bulk operations</div>
+
+                <div class="comparison-old">"It worked on my machine"</div>
+                <div class="comparison-new">Preconditions + validation</div>
+            </div>
+        </section>
+    </div>
+
+    <footer>
+        <div class="footer-links">
+            <a href="https://github.com/2389-research/agentjj">GitHub</a>
+            <a href="https://github.com/2389-research/agentjj/releases">Releases</a>
+            <a href="https://github.com/2389-research/agentjj/issues">Issues</a>
+            <a href="https://github.com/2389-research">2389 Research</a>
+        </div>
+        <div>MIT License</div>
+        <div class="footer-credit">Built for agents, by agents (with some human help)</div>
+    </footer>
+</body>
+</html>

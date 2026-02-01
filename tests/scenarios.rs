@@ -7,27 +7,42 @@ use std::fs;
 use std::process::Command as StdCommand;
 use tempfile::TempDir;
 
-/// Helper to create a jj repository in a temp directory
+/// Helper to create a git repository in a temp directory
+/// agentjj auto-colocates with git repos, so we just need git init
 fn setup_jj_repo() -> TempDir {
     let tmp = TempDir::new().expect("Failed to create temp directory");
 
-    // Initialize jj git repo
-    let output = StdCommand::new("jj")
-        .args(["git", "init"])
+    // Initialize git repo - agentjj will auto-colocate
+    let output = StdCommand::new("git")
+        .args(["init"])
         .current_dir(tmp.path())
         .output()
-        .expect("Failed to run jj git init");
+        .expect("Failed to run git init");
 
     assert!(
         output.status.success(),
-        "jj git init failed: {}",
+        "git init failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+
+    // Configure git user for commits
+    StdCommand::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(tmp.path())
+        .output()
+        .expect("Failed to configure git email");
+
+    StdCommand::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(tmp.path())
+        .output()
+        .expect("Failed to configure git name");
 
     tmp
 }
 
 /// Helper to get our binary command
+#[allow(deprecated)]
 fn agentjj() -> Command {
     Command::cargo_bin("agentjj").expect("Failed to find agentjj binary")
 }
@@ -121,12 +136,18 @@ mod new_agent_workflow {
             serde_json::from_str(&stdout).expect("Output should be valid JSON");
 
         // Verify required fields exist
-        assert!(json.get("current_state").is_some(), "Should have current_state");
+        assert!(
+            json.get("current_state").is_some(),
+            "Should have current_state"
+        );
         assert!(
             json["current_state"].get("change_id").is_some(),
             "Should have change_id"
         );
-        assert!(json.get("capabilities").is_some(), "Should have capabilities");
+        assert!(
+            json.get("capabilities").is_some(),
+            "Should have capabilities"
+        );
         assert!(json.get("quick_start").is_some(), "Should have quick_start");
         assert!(json.get("codebase").is_some(), "Should have codebase info");
     }
@@ -156,7 +177,9 @@ mod checkpoint_and_recovery {
             .args(["checkpoint", "test-recovery", "-d", "Test checkpoint"])
             .assert()
             .success()
-            .stdout(predicate::str::contains("Checkpoint 'test-recovery' created"));
+            .stdout(predicate::str::contains(
+                "Checkpoint 'test-recovery' created",
+            ));
 
         // Verify checkpoint file exists
         let checkpoint_path = tmp.path().join(".agent/checkpoints/test-recovery.json");
@@ -298,10 +321,18 @@ mod typed_change_workflow {
         let toml_files: Vec<_> = fs::read_dir(&changes_dir)
             .expect("Failed to read changes dir")
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map(|ext| ext == "toml").unwrap_or(false))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "toml")
+                    .unwrap_or(false)
+            })
             .collect();
 
-        assert!(!toml_files.is_empty(), "Should have at least one change file");
+        assert!(
+            !toml_files.is_empty(),
+            "Should have at least one change file"
+        );
     }
 
     #[test]
@@ -479,8 +510,10 @@ mod bulk_operations {
         let tmp = setup_jj_repo();
 
         // Create some test files
-        fs::write(tmp.path().join("file1.txt"), "Content of file 1").expect("Failed to write file1");
-        fs::write(tmp.path().join("file2.txt"), "Content of file 2").expect("Failed to write file2");
+        fs::write(tmp.path().join("file1.txt"), "Content of file 1")
+            .expect("Failed to write file1");
+        fs::write(tmp.path().join("file2.txt"), "Content of file 2")
+            .expect("Failed to write file2");
 
         agentjj()
             .current_dir(tmp.path())
@@ -551,7 +584,9 @@ mod bulk_operations {
             serde_json::from_str(&stdout).expect("Output should be valid JSON");
 
         assert!(json.get("errors").is_some(), "Should report errors");
-        let errors = json["errors"].as_array().expect("errors should be an array");
+        let errors = json["errors"]
+            .as_array()
+            .expect("errors should be an array");
         assert!(!errors.is_empty(), "Should have at least one error");
     }
 

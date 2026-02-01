@@ -42,6 +42,29 @@ agentjj validate                    # Check changes are ready
 agentjj undo --to before-refactor   # Restore if needed
 ```
 
+## Commit Graph
+
+agentjj can visualize the DAG in multiple formats. Here's the development history:
+
+```mermaid
+flowchart TD
+  725c2f3["feat: add tag command"]
+  725c2f3 --> a967ed4
+  a967ed4["feat: use git directly for commit/push"]
+  a967ed4 --> 2778c62
+  2778c62["feat: add commit command"]
+  2778c62 --> 94b1ce1
+  94b1ce1["fix: rust-toolchain action"]
+  94b1ce1 --> 712bdb5
+  712bdb5["docs: add README and release workflow"]
+  712bdb5 --> e5eb91b
+  e5eb91b["feat: auto-create .gitignore"]
+  e5eb91b --> e743d9a
+  e743d9a["feat: embed jj-lib, auto-colocate"]
+```
+
+Generate your own: `agentjj graph --format mermaid`
+
 ## Why agentjj?
 
 Traditional VCS tools are designed for humans. Agents need:

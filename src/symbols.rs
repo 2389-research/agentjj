@@ -171,13 +171,17 @@ pub fn extract_symbols(source: &str, language: SupportedLanguage) -> Result<Vec<
             message: format!("Failed to set language: {}", e),
         })?;
 
-    let tree = parser.parse(source, None).ok_or_else(|| Error::Repository {
-        message: "Failed to parse source".into(),
-    })?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| Error::Repository {
+            message: "Failed to parse source".into(),
+        })?;
 
-    let query = Query::new(&language.tree_sitter_language(), language.symbol_query())
-        .map_err(|e| Error::Repository {
-            message: format!("Failed to compile query: {}", e),
+    let query =
+        Query::new(&language.tree_sitter_language(), language.symbol_query()).map_err(|e| {
+            Error::Repository {
+                message: format!("Failed to compile query: {}", e),
+            }
         })?;
 
     let mut cursor = QueryCursor::new();
@@ -199,7 +203,7 @@ pub fn extract_symbols(source: &str, language: SupportedLanguage) -> Result<Vec<
         let mut end_line = 0;
 
         for capture in m.captures {
-            let capture_name: &str = &query.capture_names()[capture.index as usize];
+            let capture_name = query.capture_names()[capture.index as usize];
             let node = capture.node;
             let text = node.utf8_text(source_bytes).unwrap_or("");
 
@@ -273,13 +277,21 @@ pub fn extract_symbols(source: &str, language: SupportedLanguage) -> Result<Vec<
 }
 
 /// Find a specific symbol by name in a file
-pub fn find_symbol(source: &str, language: SupportedLanguage, symbol_name: &str) -> Result<Option<Symbol>> {
+pub fn find_symbol(
+    source: &str,
+    language: SupportedLanguage,
+    symbol_name: &str,
+) -> Result<Option<Symbol>> {
     let symbols = extract_symbols(source, language)?;
     Ok(symbols.into_iter().find(|s| s.name == symbol_name))
 }
 
 /// Get minimal context needed to use a symbol (signature + docstring)
-pub fn get_symbol_context(source: &str, language: SupportedLanguage, symbol_name: &str) -> Result<Option<SymbolContext>> {
+pub fn get_symbol_context(
+    source: &str,
+    language: SupportedLanguage,
+    symbol_name: &str,
+) -> Result<Option<SymbolContext>> {
     let symbol = find_symbol(source, language, symbol_name)?;
 
     Ok(symbol.map(|s| SymbolContext {

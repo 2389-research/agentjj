@@ -11,7 +11,7 @@ use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::object_id::ObjectId;
 use jj_lib::repo::{ReadonlyRepo, Repo as JjRepo, StoreFactories};
 use jj_lib::settings::UserSettings;
-use jj_lib::workspace::{default_working_copy_factories, Workspace, WorkingCopyFactories};
+use jj_lib::workspace::{default_working_copy_factories, WorkingCopyFactories, Workspace};
 use serde::Deserialize;
 
 use crate::change::{InvariantStatus, InvariantsResult, TypedChange};
@@ -185,15 +185,10 @@ impl Repo {
             let store_factories = get_store_factories();
             let wc_factories = get_working_copy_factories();
 
-            let workspace = Workspace::load(
-                &settings,
-                &self.root,
-                &store_factories,
-                &wc_factories,
-            )
-            .map_err(|e| Error::Repository {
-                message: format!("failed to load workspace: {}", e),
-            })?;
+            let workspace = Workspace::load(&settings, &self.root, &store_factories, &wc_factories)
+                .map_err(|e| Error::Repository {
+                    message: format!("failed to load workspace: {}", e),
+                })?;
 
             self.workspace = Some(workspace);
         }
@@ -237,11 +232,12 @@ impl Repo {
                 message: "no working copy commit found".into(),
             })?;
 
-        let commit = repo.store().get_commit(wc_commit_id).map_err(|e| {
-            Error::Repository {
+        let commit = repo
+            .store()
+            .get_commit(wc_commit_id)
+            .map_err(|e| Error::Repository {
                 message: format!("failed to get commit: {}", e),
-            }
-        })?;
+            })?;
 
         Ok(commit.change_id().hex())
     }
@@ -294,28 +290,32 @@ impl Repo {
         } else {
             // Try to parse as commit ID hex prefix
             CommitId::try_from_hex(rev).ok_or_else(|| Error::Repository {
-                message: format!("cannot resolve revision '{}' - only @ and commit IDs are supported via jj-lib", rev),
+                message: format!(
+                    "cannot resolve revision '{}' - only @ and commit IDs are supported via jj-lib",
+                    rev
+                ),
             })?
         };
 
-        let commit = repo.store().get_commit(&commit_id).map_err(|e| {
-            Error::Repository {
+        let commit = repo
+            .store()
+            .get_commit(&commit_id)
+            .map_err(|e| Error::Repository {
                 message: format!("failed to get commit: {}", e),
-            }
-        })?;
+            })?;
 
         // Get the tree and read the file
         let tree = commit.tree();
-        let repo_path = jj_lib::repo_path::RepoPathBuf::from_internal_string(path)
-            .map_err(|e| Error::Repository {
-                message: format!("invalid path '{}': {}", path, e),
+        let repo_path =
+            jj_lib::repo_path::RepoPathBuf::from_internal_string(path).map_err(|e| {
+                Error::Repository {
+                    message: format!("invalid path '{}': {}", path, e),
+                }
             })?;
 
-        let value = tree
-            .path_value(&repo_path)
-            .map_err(|e| Error::Repository {
-                message: format!("failed to read tree: {}", e),
-            })?;
+        let value = tree.path_value(&repo_path).map_err(|e| Error::Repository {
+            message: format!("failed to read tree: {}", e),
+        })?;
 
         // Check if file exists and is a normal file
         if value.is_absent() {
@@ -363,11 +363,12 @@ impl Repo {
         let repo = self.load_repo_at_head()?;
 
         // Try to find commit by change ID
-        let change_id_obj = jj_lib::backend::ChangeId::try_from_hex(change_id).ok_or_else(|| {
-            Error::Repository {
-                message: format!("invalid change ID: {}", change_id),
-            }
-        })?;
+        let change_id_obj =
+            jj_lib::backend::ChangeId::try_from_hex(change_id).ok_or_else(|| {
+                Error::Repository {
+                    message: format!("invalid change ID: {}", change_id),
+                }
+            })?;
 
         let targets = repo
             .resolve_change_id(&change_id_obj)
@@ -379,24 +380,24 @@ impl Repo {
             })?;
 
         // Get the first visible commit for this change
-        let (_, commit_id) = targets
-            .visible_with_offsets()
-            .next()
-            .ok_or_else(|| Error::Repository {
-                message: format!("no visible commits for change '{}'", change_id),
+        let (_, commit_id) =
+            targets
+                .visible_with_offsets()
+                .next()
+                .ok_or_else(|| Error::Repository {
+                    message: format!("no visible commits for change '{}'", change_id),
+                })?;
+
+        let commit = repo
+            .store()
+            .get_commit(commit_id)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to get commit: {}", e),
             })?;
 
-        let commit = repo.store().get_commit(commit_id).map_err(|e| {
-            Error::Repository {
-                message: format!("failed to get commit: {}", e),
-            }
-        })?;
-
         // Get parent tree for diff
-        let parent_tree = commit.parent_tree(&*repo).map_err(|e| {
-            Error::Repository {
-                message: format!("failed to get parent tree: {}", e),
-            }
+        let parent_tree = commit.parent_tree(&*repo).map_err(|e| Error::Repository {
+            message: format!("failed to get parent tree: {}", e),
         })?;
 
         let tree = commit.tree();
@@ -431,11 +432,12 @@ impl Repo {
             message: format!("bookmark '{}' has no commits", branch),
         })?;
 
-        let commit = repo.store().get_commit(commit_id).map_err(|e| {
-            Error::Repository {
+        let commit = repo
+            .store()
+            .get_commit(commit_id)
+            .map_err(|e| Error::Repository {
                 message: format!("failed to get commit: {}", e),
-            }
-        })?;
+            })?;
 
         Ok(Some(commit.change_id().hex()))
     }
@@ -444,11 +446,12 @@ impl Repo {
     pub fn has_conflicts(&mut self, change_id: &str) -> Result<bool> {
         let repo = self.load_repo_at_head()?;
 
-        let change_id_obj = jj_lib::backend::ChangeId::try_from_hex(change_id).ok_or_else(|| {
-            Error::Repository {
-                message: format!("invalid change ID: {}", change_id),
-            }
-        })?;
+        let change_id_obj =
+            jj_lib::backend::ChangeId::try_from_hex(change_id).ok_or_else(|| {
+                Error::Repository {
+                    message: format!("invalid change ID: {}", change_id),
+                }
+            })?;
 
         let targets = repo
             .resolve_change_id(&change_id_obj)
@@ -458,11 +461,12 @@ impl Repo {
 
         if let Some(targets) = targets {
             for (_, commit_id) in targets.visible_with_offsets() {
-                let commit = repo.store().get_commit(commit_id).map_err(|e| {
-                    Error::Repository {
+                let commit = repo
+                    .store()
+                    .get_commit(commit_id)
+                    .map_err(|e| Error::Repository {
                         message: format!("failed to get commit: {}", e),
-                    }
-                })?;
+                    })?;
                 if commit.has_conflict() {
                     return Ok(true);
                 }
@@ -476,11 +480,12 @@ impl Repo {
     pub fn get_conflicts(&mut self, change_id: &str) -> Result<Vec<ConflictDetail>> {
         let repo = self.load_repo_at_head()?;
 
-        let change_id_obj = jj_lib::backend::ChangeId::try_from_hex(change_id).ok_or_else(|| {
-            Error::Repository {
-                message: format!("invalid change ID: {}", change_id),
-            }
-        })?;
+        let change_id_obj =
+            jj_lib::backend::ChangeId::try_from_hex(change_id).ok_or_else(|| {
+                Error::Repository {
+                    message: format!("invalid change ID: {}", change_id),
+                }
+            })?;
 
         let targets = repo
             .resolve_change_id(&change_id_obj)
@@ -494,11 +499,12 @@ impl Repo {
         let mut conflicts = Vec::new();
 
         for (_, commit_id) in targets.visible_with_offsets() {
-            let commit = repo.store().get_commit(commit_id).map_err(|e| {
-                Error::Repository {
+            let commit = repo
+                .store()
+                .get_commit(commit_id)
+                .map_err(|e| Error::Repository {
                     message: format!("failed to get commit: {}", e),
-                }
-            })?;
+                })?;
 
             if commit.has_conflict() {
                 let tree = commit.tree();
@@ -596,8 +602,9 @@ impl Repo {
         };
 
         // 8. Save typed change metadata
-        let typed_change = TypedChange::new(change_id.clone(), intent.change_type, &intent.description)
-            .with_files(files_changed.clone());
+        let typed_change =
+            TypedChange::new(change_id.clone(), intent.change_type, &intent.description)
+                .with_files(files_changed.clone());
         let typed_change = if intent.breaking {
             typed_change.breaking()
         } else {
@@ -636,11 +643,12 @@ impl Repo {
                 message: format!("failed to load workspace: {}", e),
             })?;
 
-        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
-            Error::Repository {
+        let repo = workspace
+            .repo_loader()
+            .load_at_head()
+            .map_err(|e| Error::Repository {
                 message: format!("failed to load repository: {}", e),
-            }
-        })?;
+            })?;
 
         // Get current working copy commit
         let wc_commit_id = repo
@@ -651,11 +659,12 @@ impl Repo {
                 message: "no working copy commit found".into(),
             })?;
 
-        let parent_commit = repo.store().get_commit(&wc_commit_id).map_err(|e| {
-            Error::Repository {
-                message: format!("failed to get commit: {}", e),
-            }
-        })?;
+        let parent_commit =
+            repo.store()
+                .get_commit(&wc_commit_id)
+                .map_err(|e| Error::Repository {
+                    message: format!("failed to get commit: {}", e),
+                })?;
 
         // Start a transaction
         let mut tx = repo.start_transaction();
@@ -672,7 +681,10 @@ impl Repo {
 
         // Update working copy to point to new commit
         tx.repo_mut()
-            .set_wc_commit(workspace.workspace_name().to_owned(), new_commit.id().clone())
+            .set_wc_commit(
+                workspace.workspace_name().to_owned(),
+                new_commit.id().clone(),
+            )
             .map_err(|e| Error::Repository {
                 message: format!("failed to set working copy: {}", e),
             })?;
@@ -702,19 +714,21 @@ impl Repo {
                 message: format!("failed to load workspace: {}", e),
             })?;
 
-        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
-            Error::Repository {
+        let repo = workspace
+            .repo_loader()
+            .load_at_head()
+            .map_err(|e| Error::Repository {
                 message: format!("failed to load repository: {}", e),
-            }
-        })?;
+            })?;
 
         // Get parent operation
         let current_op = repo.operation();
-        let parent_ops: Vec<_> = current_op.parents().collect::<std::result::Result<_, _>>().map_err(|e| {
-            Error::Repository {
+        let parent_ops: Vec<_> = current_op
+            .parents()
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| Error::Repository {
                 message: format!("failed to get parent operations: {}", e),
-            }
-        })?;
+            })?;
 
         if parent_ops.is_empty() {
             return Err(Error::Repository {
@@ -723,11 +737,12 @@ impl Repo {
         }
 
         // Load repo at parent operation
-        let _parent_repo = workspace.repo_loader().load_at(&parent_ops[0]).map_err(|e| {
-            Error::Repository {
+        let _parent_repo = workspace
+            .repo_loader()
+            .load_at(&parent_ops[0])
+            .map_err(|e| Error::Repository {
                 message: format!("failed to load parent operation: {}", e),
-            }
-        })?;
+            })?;
 
         // Force workspace reload
         self.workspace = None;
@@ -736,6 +751,7 @@ impl Repo {
     }
 
     /// Check preconditions for an intent
+    #[allow(clippy::result_large_err)]
     fn check_preconditions(&mut self, intent: &Intent) -> std::result::Result<(), IntentResult> {
         let preconds = &intent.preconditions;
 
@@ -836,6 +852,7 @@ impl Repo {
     }
 
     /// Check permissions for an intent
+    #[allow(clippy::result_large_err)]
     fn check_permissions(&mut self, intent: &Intent) -> std::result::Result<(), IntentResult> {
         let manifest = match self.manifest() {
             Ok(m) => m.clone(),
@@ -948,6 +965,7 @@ impl Repo {
     }
 
     /// Run invariants and return results
+    #[allow(clippy::type_complexity)]
     fn run_invariants(
         &mut self,
         trigger: InvariantTrigger,
@@ -1002,11 +1020,12 @@ impl Repo {
         let repo = self.load_repo_at_head()?;
 
         let current_op = repo.operation();
-        let parent_ops: Vec<_> = current_op.parents().collect::<std::result::Result<_, _>>().map_err(|e| {
-            Error::Repository {
+        let parent_ops: Vec<_> = current_op
+            .parents()
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| Error::Repository {
                 message: format!("failed to get parent operations: {}", e),
-            }
-        })?;
+            })?;
 
         if parent_ops.is_empty() {
             Ok(current_op.id().hex())
@@ -1036,11 +1055,12 @@ impl Repo {
                 message: format!("failed to load workspace: {}", e),
             })?;
 
-        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
-            Error::Repository {
+        let repo = workspace
+            .repo_loader()
+            .load_at_head()
+            .map_err(|e| Error::Repository {
                 message: format!("failed to load repository: {}", e),
-            }
-        })?;
+            })?;
 
         let wc_commit_id = repo
             .view()
@@ -1050,11 +1070,12 @@ impl Repo {
                 message: "no working copy commit found".into(),
             })?;
 
-        let commit = repo.store().get_commit(&wc_commit_id).map_err(|e| {
-            Error::Repository {
+        let commit = repo
+            .store()
+            .get_commit(&wc_commit_id)
+            .map_err(|e| Error::Repository {
                 message: format!("failed to get commit: {}", e),
-            }
-        })?;
+            })?;
 
         // Start transaction
         let mut tx = repo.start_transaction();
@@ -1071,15 +1092,20 @@ impl Repo {
 
         // Update working copy
         tx.repo_mut()
-            .set_wc_commit(workspace.workspace_name().to_owned(), new_commit.id().clone())
+            .set_wc_commit(
+                workspace.workspace_name().to_owned(),
+                new_commit.id().clone(),
+            )
             .map_err(|e| Error::Repository {
                 message: format!("failed to set working copy: {}", e),
             })?;
 
         // Rebase descendants
-        tx.repo_mut().rebase_descendants().map_err(|e| Error::Repository {
-            message: format!("failed to rebase descendants: {}", e),
-        })?;
+        tx.repo_mut()
+            .rebase_descendants()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to rebase descendants: {}", e),
+            })?;
 
         // Commit transaction
         tx.commit("describe").map_err(|e| Error::Repository {
@@ -1110,11 +1136,12 @@ impl Repo {
                 message: format!("failed to load workspace: {}", e),
             })?;
 
-        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
-            Error::Repository {
+        let repo = workspace
+            .repo_loader()
+            .load_at_head()
+            .map_err(|e| Error::Repository {
                 message: format!("failed to load repository: {}", e),
-            }
-        })?;
+            })?;
 
         let wc_commit_id = repo
             .view()
@@ -1124,11 +1151,12 @@ impl Repo {
                 message: "no working copy commit found".into(),
             })?;
 
-        let commit = repo.store().get_commit(&wc_commit_id).map_err(|e| {
-            Error::Repository {
+        let commit = repo
+            .store()
+            .get_commit(&wc_commit_id)
+            .map_err(|e| Error::Repository {
                 message: format!("failed to get commit: {}", e),
-            }
-        })?;
+            })?;
 
         // Get parent commit
         let parent_ids = commit.parent_ids();
@@ -1138,11 +1166,12 @@ impl Repo {
             });
         }
 
-        let parent = repo.store().get_commit(&parent_ids[0]).map_err(|e| {
-            Error::Repository {
+        let parent = repo
+            .store()
+            .get_commit(&parent_ids[0])
+            .map_err(|e| Error::Repository {
                 message: format!("failed to get parent commit: {}", e),
-            }
-        })?;
+            })?;
 
         // Start transaction
         let mut tx = repo.start_transaction();
@@ -1166,20 +1195,27 @@ impl Repo {
             })?;
 
         // Record the rewrites
-        tx.repo_mut().set_rewritten_commit(commit.id().clone(), new_commit.id().clone());
-        tx.repo_mut().set_rewritten_commit(parent.id().clone(), new_commit.id().clone());
+        tx.repo_mut()
+            .set_rewritten_commit(commit.id().clone(), new_commit.id().clone());
+        tx.repo_mut()
+            .set_rewritten_commit(parent.id().clone(), new_commit.id().clone());
 
         // Update working copy
         tx.repo_mut()
-            .set_wc_commit(workspace.workspace_name().to_owned(), new_commit.id().clone())
+            .set_wc_commit(
+                workspace.workspace_name().to_owned(),
+                new_commit.id().clone(),
+            )
             .map_err(|e| Error::Repository {
                 message: format!("failed to set working copy: {}", e),
             })?;
 
         // Rebase descendants
-        tx.repo_mut().rebase_descendants().map_err(|e| Error::Repository {
-            message: format!("failed to rebase descendants: {}", e),
-        })?;
+        tx.repo_mut()
+            .rebase_descendants()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to rebase descendants: {}", e),
+            })?;
 
         // Commit transaction
         tx.commit("squash").map_err(|e| Error::Repository {
@@ -1197,9 +1233,7 @@ impl Repo {
         let repo = self.load_repo_at_head()?;
         let workspace = self.workspace.as_ref().unwrap();
 
-        let wc_commit_id = repo
-            .view()
-            .get_wc_commit_id(workspace.workspace_name());
+        let wc_commit_id = repo.view().get_wc_commit_id(workspace.workspace_name());
 
         let mut entries = Vec::new();
         let mut count = 0;
@@ -1240,7 +1274,11 @@ impl Repo {
                     .filter_map(|pid| {
                         repo.store().get_commit(pid).ok().map(|p| {
                             let hex = p.change_id().hex();
-                            if hex.len() > 8 { hex[..8].to_string() } else { hex }
+                            if hex.len() > 8 {
+                                hex[..8].to_string()
+                            } else {
+                                hex
+                            }
                         })
                     })
                     .collect();
@@ -1249,9 +1287,22 @@ impl Repo {
                 let commit_hex = commit_id.hex();
 
                 entries.push(LogEntry {
-                    change_id: if change_hex.len() > 8 { change_hex[..8].to_string() } else { change_hex },
-                    commit_id: if commit_hex.len() > 8 { commit_hex[..8].to_string() } else { commit_hex },
-                    description: commit.description().lines().next().unwrap_or("").to_string(),
+                    change_id: if change_hex.len() > 8 {
+                        change_hex[..8].to_string()
+                    } else {
+                        change_hex
+                    },
+                    commit_id: if commit_hex.len() > 8 {
+                        commit_hex[..8].to_string()
+                    } else {
+                        commit_hex
+                    },
+                    description: commit
+                        .description()
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string(),
                     parent_change_ids,
                     is_working_copy,
                 });
@@ -1308,11 +1359,12 @@ impl Repo {
                 message: format!("failed to load workspace: {}", e),
             })?;
 
-        let repo = workspace.repo_loader().load_at_head().map_err(|e| {
-            Error::Repository {
+        let repo = workspace
+            .repo_loader()
+            .load_at_head()
+            .map_err(|e| Error::Repository {
                 message: format!("failed to load repository: {}", e),
-            }
-        })?;
+            })?;
 
         // Find the operation by ID
         let op_id_obj = jj_lib::op_store::OperationId::try_from_hex(op_id).ok_or_else(|| {
@@ -1321,33 +1373,37 @@ impl Repo {
             }
         })?;
 
-        let target_op = workspace.repo_loader().load_operation(&op_id_obj).map_err(|e| {
-            Error::Repository {
+        let target_op = workspace
+            .repo_loader()
+            .load_operation(&op_id_obj)
+            .map_err(|e| Error::Repository {
                 message: format!("failed to load operation: {}", e),
-            }
-        })?;
+            })?;
 
         // Load repo at target operation
-        let target_repo = workspace.repo_loader().load_at(&target_op).map_err(|e| {
-            Error::Repository {
-                message: format!("failed to load repository at operation: {}", e),
-            }
-        })?;
+        let target_repo =
+            workspace
+                .repo_loader()
+                .load_at(&target_op)
+                .map_err(|e| Error::Repository {
+                    message: format!("failed to load repository at operation: {}", e),
+                })?;
 
         // Create a transaction to record the restore
         let mut tx = repo.start_transaction();
 
         // Merge in the target operation's view
-        tx.repo_mut().merge(&repo, &target_repo).map_err(|e| {
-            Error::Repository {
+        tx.repo_mut()
+            .merge(&repo, &target_repo)
+            .map_err(|e| Error::Repository {
                 message: format!("failed to merge operation: {}", e),
-            }
-        })?;
+            })?;
 
         // Commit the restore transaction
-        tx.commit(&format!("restore to operation {}", op_id)).map_err(|e| Error::Repository {
-            message: format!("failed to commit restore: {}", e),
-        })?;
+        tx.commit(format!("restore to operation {}", op_id))
+            .map_err(|e| Error::Repository {
+                message: format!("failed to commit restore: {}", e),
+            })?;
 
         // Clear cached workspace
         self.workspace = None;
@@ -1357,6 +1413,7 @@ impl Repo {
 
     /// Get the raw ASCII graph output.
     /// Note: This still shells out to jj for complex graph rendering.
+    #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn log_ascii(&mut self, limit: usize, all: bool) -> Result<String> {
         // For ASCII graph rendering, we still use jj CLI as jj-lib doesn't have
         // a built-in ASCII graph renderer and implementing one is complex.

@@ -13,7 +13,10 @@ pub enum Error {
     ManifestNotFound { path: String },
 
     #[error("manifest parse error: {message}")]
-    ManifestParse { message: String, line: Option<usize> },
+    ManifestParse {
+        message: String,
+        line: Option<usize>,
+    },
 
     #[error("precondition failed: {reason}")]
     PreconditionFailed {
@@ -97,14 +100,12 @@ mod tests {
     fn conflict_error_includes_details() {
         let err = Error::Conflict {
             file_count: 2,
-            conflicts: vec![
-                ConflictDetail {
-                    file: "src/api.py".into(),
-                    ours: "fn a()".into(),
-                    theirs: "fn b()".into(),
-                    base: Some("fn original()".into()),
-                },
-            ],
+            conflicts: vec![ConflictDetail {
+                file: "src/api.py".into(),
+                ours: "fn a()".into(),
+                theirs: "fn b()".into(),
+                base: Some("fn original()".into()),
+            }],
             operation_id: "op123".into(),
         };
 

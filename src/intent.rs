@@ -81,7 +81,11 @@ impl Preconditions {
     }
 
     /// Require a branch to point to a specific change
-    pub fn with_branch_at(mut self, branch: impl Into<String>, change_id: impl Into<String>) -> Self {
+    pub fn with_branch_at(
+        mut self,
+        branch: impl Into<String>,
+        change_id: impl Into<String>,
+    ) -> Self {
         self.branch_at.insert(branch.into(), change_id.into());
         self
     }
@@ -223,8 +227,12 @@ impl IntentResult {
     /// Get rollback command if available
     pub fn rollback_command(&self) -> Option<&str> {
         match self {
-            IntentResult::Conflict { rollback_command, .. } => Some(rollback_command),
-            IntentResult::InvariantFailed { rollback_command, .. } => Some(rollback_command),
+            IntentResult::Conflict {
+                rollback_command, ..
+            } => Some(rollback_command),
+            IntentResult::InvariantFailed {
+                rollback_command, ..
+            } => Some(rollback_command),
             _ => None,
         }
     }
@@ -293,14 +301,12 @@ mod tests {
             "Add retry logic to webhook handler",
             ChangeType::Behavioral,
             ChangeSpec::Patch {
-                content: "--- a/src/webhook.py\n+++ b/src/webhook.py\n@@ -1 +1 @@\n-old\n+new".into(),
+                content: "--- a/src/webhook.py\n+++ b/src/webhook.py\n@@ -1 +1 @@\n-old\n+new"
+                    .into(),
             },
         )
         .with_category(ChangeCategory::Feature)
-        .with_preconditions(
-            Preconditions::default()
-                .with_branch_at("main", "qpvuntsm")
-        );
+        .with_preconditions(Preconditions::default().with_branch_at("main", "qpvuntsm"));
 
         assert_eq!(intent.change_type, ChangeType::Behavioral);
         assert!(intent.preconditions.branch_at.contains_key("main"));
@@ -312,12 +318,10 @@ mod tests {
             "Add new configuration file",
             ChangeType::Config,
             ChangeSpec::Files {
-                operations: vec![
-                    FileOperation::Create {
-                        path: "config/new.toml".into(),
-                        content: "[settings]\nkey = \"value\"".into(),
-                    },
-                ],
+                operations: vec![FileOperation::Create {
+                    path: "config/new.toml".into(),
+                    content: "[settings]\nkey = \"value\"".into(),
+                }],
             },
         );
 
