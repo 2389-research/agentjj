@@ -109,6 +109,10 @@ enum Commands {
         #[arg(short, long)]
         branch: Option<String>,
 
+        /// Change ID to push (default: @- if @ is empty, else @)
+        #[arg(short, long)]
+        change: Option<String>,
+
         /// Create a pull request
         #[arg(long)]
         pr: bool,
@@ -367,11 +371,12 @@ fn run_command(cli: Cli) -> Result<()> {
         Commands::Context { path } => cmd_context(path, cli.json),
         Commands::Push {
             branch,
+            change,
             pr,
             title,
             body,
             target,
-        } => cmd_push(branch, pr, title, body, target, cli.json),
+        } => cmd_push(branch, change, pr, title, body, target, cli.json),
         Commands::Commit { message, no_new } => cmd_commit(message, no_new, cli.json),
         Commands::Orient => cmd_orient(cli.json),
         Commands::Checkpoint { name, description } => cmd_checkpoint(name, description, cli.json),
@@ -964,6 +969,7 @@ fn cmd_commit(message: String, no_new: bool, json: bool) -> Result<()> {
 
 fn cmd_push(
     branch: Option<String>,
+    change: Option<String>,
     create_pr: bool,
     title: Option<String>,
     body: Option<String>,
@@ -971,6 +977,25 @@ fn cmd_push(
     json: bool,
 ) -> Result<()> {
     let mut repo = Repo::discover()?;
+
+    // Determine which change to push
+    let change_to_push = if let Some(c) = change {
+        c
+    } else {
+        // Check if current working copy is empty, if so use parent
+        let status_output = std::process::Command::new("jj")
+            .current_dir(repo.root())
+            .args(["log", "-r", "@", "--no-graph", "-T", "if(empty, \"empty\", \"has_changes\")"])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to check status: {}", e))?;
+
+        let status = String::from_utf8_lossy(&status_output.stdout);
+        if status.trim() == "empty" {
+            "@-".to_string()  // Use parent if current is empty
+        } else {
+            "@".to_string()
+        }
+    };
 
     // Determine branch name
     let branch_name = branch.unwrap_or_else(|| {
@@ -980,10 +1005,10 @@ fn cmd_push(
             .unwrap_or_else(|_| "agent/push".to_string())
     });
 
-    // Create bookmark pointing to current change
+    // Create bookmark pointing to the change
     let bookmark_output = std::process::Command::new("jj")
         .current_dir(repo.root())
-        .args(["bookmark", "set", &branch_name])
+        .args(["bookmark", "set", &branch_name, "-r", &change_to_push])
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to run jj: {}", e))?;
 
