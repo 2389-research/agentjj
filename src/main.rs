@@ -139,6 +139,22 @@ enum Commands {
         /// Don't create a new working copy after committing
         #[arg(long)]
         no_new: bool,
+
+        /// Change type (behavioral, refactor, schema, docs, deps, config, test)
+        #[arg(short = 't', long = "type", default_value = "behavioral")]
+        change_type: String,
+
+        /// Category (feature, fix, perf, security, breaking, deprecation, chore)
+        #[arg(short, long)]
+        category: Option<String>,
+
+        /// Skip running invariants
+        #[arg(long)]
+        no_invariants: bool,
+
+        /// Mark as breaking change
+        #[arg(long)]
+        breaking: bool,
     },
 
     /// Create or update a git tag
@@ -237,6 +253,12 @@ enum Commands {
 
     /// Suggest next actions based on current state
     Suggest,
+
+    /// Output the full skill documentation (for agent self-discovery)
+    Skill,
+
+    /// Show a concise getting-started guide (works without a repo)
+    Quickstart,
 
     /// Output the repository DAG in various formats
     Graph {
@@ -395,7 +417,22 @@ fn run_command(cli: Cli) -> Result<()> {
             body,
             target,
         } => cmd_push(branch, change, pr, title, body, target, cli.json),
-        Commands::Commit { message, no_new } => cmd_commit(message, no_new, cli.json),
+        Commands::Commit {
+            message,
+            no_new,
+            change_type,
+            category,
+            no_invariants,
+            breaking,
+        } => cmd_commit(
+            message,
+            no_new,
+            change_type,
+            category,
+            no_invariants,
+            breaking,
+            cli.json,
+        ),
         Commands::Tag {
             name,
             message,
@@ -412,6 +449,8 @@ fn run_command(cli: Cli) -> Result<()> {
         Commands::Schema { r#type } => cmd_schema(r#type, cli.json),
         Commands::Validate => cmd_validate(cli.json),
         Commands::Suggest => cmd_suggest(cli.json),
+        Commands::Skill => cmd_skill(cli.json),
+        Commands::Quickstart => cmd_quickstart(cli.json),
         Commands::Graph { format, limit, all } => cmd_graph(format, limit, all, cli.json),
     }
 }
@@ -969,60 +1008,72 @@ fn cmd_context(path: String, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_commit(message: String, _no_new: bool, json: bool) -> Result<()> {
-    let repo = Repo::discover()?;
+fn cmd_commit(
+    message: String,
+    no_new: bool,
+    change_type_str: String,
+    category_str: Option<String>,
+    no_invariants: bool,
+    breaking: bool,
+    json: bool,
+) -> Result<()> {
+    let mut repo = Repo::discover()?;
 
-    // Use git directly for colocated repos
-    // Stage all changes
-    let add_output = std::process::Command::new("git")
-        .current_dir(repo.root())
-        .args(["add", "-A"])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run git add: {}", e))?;
+    let change_type = parse_change_type(&change_type_str)?;
+    let category = match category_str {
+        Some(ref c) => Some(parse_category(c)?),
+        None => None,
+    };
 
-    if !add_output.status.success() {
-        let stderr = String::from_utf8_lossy(&add_output.stderr);
-        anyhow::bail!("Failed to stage changes: {}", stderr);
-    }
+    let opts = agentjj::repo::CommitOptions {
+        message: message.clone(),
+        no_new,
+        run_invariants: !no_invariants,
+        change_type,
+        category,
+        breaking,
+    };
 
-    // Commit with message
-    let commit_output = std::process::Command::new("git")
-        .current_dir(repo.root())
-        .args(["commit", "-m", &message])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run git commit: {}", e))?;
-
-    if !commit_output.status.success() {
-        let stderr = String::from_utf8_lossy(&commit_output.stderr);
-        // Check if it's just "nothing to commit"
-        if stderr.contains("nothing to commit")
-            || String::from_utf8_lossy(&commit_output.stdout).contains("nothing to commit")
-        {
-            anyhow::bail!("Nothing to commit - working tree clean");
-        }
-        anyhow::bail!("Failed to commit: {}", stderr);
-    }
-
-    // Get the commit SHA
-    let rev_parse = std::process::Command::new("git")
-        .current_dir(repo.root())
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()?;
-
-    let commit_sha = String::from_utf8_lossy(&rev_parse.stdout)
-        .trim()
-        .to_string();
+    let result = repo.commit_working_copy(opts)?;
 
     if json {
-        let result = serde_json::json!({
+        let invariant_map: serde_json::Value = result
+            .invariants
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    serde_json::to_value(v).unwrap_or(serde_json::json!("unknown")),
+                )
+            })
+            .collect::<serde_json::Map<String, serde_json::Value>>()
+            .into();
+
+        let output = serde_json::json!({
             "committed": true,
-            "commit": commit_sha,
+            "change_id": result.change_id,
+            "commit": result.commit_id,
             "message": message,
+            "files_changed": result.files_changed,
+            "invariants": invariant_map,
         });
-        println!("{}", serde_json::to_string_pretty(&result)?);
+        println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!("✓ Committed: {}", message);
-        println!("  Commit: {}", commit_sha);
+        println!("Committed: {}", message);
+        println!("  Change:  {}", result.change_id);
+        println!("  Commit:  {}", result.commit_id);
+        if !result.files_changed.is_empty() {
+            println!("  Files:   {}", result.files_changed.len());
+            for f in &result.files_changed {
+                println!("    {}", f);
+            }
+        }
+        if !result.invariants.is_empty() {
+            println!("  Invariants:");
+            for (name, status) in &result.invariants {
+                println!("    {}: {:?}", name, status);
+            }
+        }
     }
 
     Ok(())
@@ -2473,6 +2524,108 @@ fn cmd_graph_dot(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result
         );
     } else {
         print!("{}", diagram);
+    }
+
+    Ok(())
+}
+
+/// Output the full skill documentation, embedded at compile time
+fn cmd_skill(json: bool) -> Result<()> {
+    let skill_text = include_str!("../docs/skill.md");
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "format": "markdown",
+                "content": skill_text,
+                "description": "Full agentjj skill documentation for agent self-discovery",
+            }))?
+        );
+    } else {
+        print!("{}", skill_text);
+    }
+
+    Ok(())
+}
+
+/// Show a concise getting-started guide (works without a repo)
+fn cmd_quickstart(json: bool) -> Result<()> {
+    let steps = [
+        (
+            "orient",
+            "agentjj orient",
+            "Get a complete repo briefing — current state, codebase stats, capabilities",
+        ),
+        (
+            "status",
+            "agentjj status",
+            "Check working copy changes and current change ID",
+        ),
+        (
+            "checkpoint",
+            "agentjj checkpoint <name>",
+            "Save a named restore point before making changes",
+        ),
+        (
+            "diff",
+            "agentjj diff",
+            "Review your changes before committing",
+        ),
+        (
+            "commit",
+            "agentjj commit -m \"feat: description\"",
+            "Commit with a typed message (describe + new working copy)",
+        ),
+        (
+            "push",
+            "agentjj push --branch main",
+            "Push changes to the remote",
+        ),
+    ];
+
+    let tips = [
+        "Use --json on any command for machine-parseable output",
+        "Run agentjj suggest to get context-aware next actions",
+        "Use agentjj bulk read/symbols/context for batch operations",
+        "Run agentjj undo --to <checkpoint> to recover from mistakes",
+        "Run agentjj skill to read the full documentation",
+        "Run agentjj schema to see all JSON output formats",
+    ];
+
+    if json {
+        let json_steps: Vec<serde_json::Value> = steps
+            .iter()
+            .enumerate()
+            .map(|(i, (step, command, description))| {
+                serde_json::json!({
+                    "step": i + 1,
+                    "name": step,
+                    "command": command,
+                    "description": description,
+                })
+            })
+            .collect();
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "title": "agentjj Quick Start",
+                "description": "6 steps to productive version control with agentjj",
+                "steps": json_steps,
+                "tips": tips,
+            }))?
+        );
+    } else {
+        println!("=== agentjj Quick Start ===\n");
+        for (i, (_step, command, description)) in steps.iter().enumerate() {
+            println!("  {}. $ {}", i + 1, command);
+            println!("     {}\n", description);
+        }
+        println!("Tips:");
+        for tip in &tips {
+            println!("  * {}", tip);
+        }
     }
 
     Ok(())

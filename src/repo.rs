@@ -8,13 +8,17 @@ use std::sync::Arc;
 
 use jj_lib::backend::CommitId;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
+use jj_lib::gitignore::GitIgnoreFile;
+use jj_lib::matchers::{EverythingMatcher, NothingMatcher};
 use jj_lib::object_id::ObjectId;
 use jj_lib::repo::{ReadonlyRepo, Repo as JjRepo, StoreFactories};
 use jj_lib::settings::UserSettings;
+use jj_lib::working_copy::SnapshotOptions;
 use jj_lib::workspace::{default_working_copy_factories, WorkingCopyFactories, Workspace};
+use pollster::FutureExt as _;
 use serde::Deserialize;
 
-use crate::change::{InvariantStatus, InvariantsResult, TypedChange};
+use crate::change::{ChangeCategory, ChangeType, InvariantStatus, InvariantsResult, TypedChange};
 use crate::error::{ConflictDetail, Error, Result};
 use crate::intent::{ChangeSpec, FileOperation, Intent, IntentResult};
 use crate::manifest::{InvariantTrigger, Manifest};
@@ -65,6 +69,71 @@ pub struct LogEntry {
 pub struct OperationInfo {
     pub id: String,
     pub description: String,
+}
+
+/// Options for commit_working_copy
+pub struct CommitOptions {
+    pub message: String,
+    pub no_new: bool,
+    pub run_invariants: bool,
+    pub change_type: ChangeType,
+    pub category: Option<ChangeCategory>,
+    pub breaking: bool,
+}
+
+/// Result of a successful commit via jj-lib
+pub struct CommitResult {
+    pub change_id: String,
+    pub commit_id: String,
+    pub operation_id: String,
+    pub files_changed: Vec<String>,
+    pub invariants: HashMap<String, InvariantStatus>,
+}
+
+/// Load base gitignore rules for working copy snapshots. Mirrors what the
+/// jj CLI does: reads the global gitignore and .git/info/exclude so that
+/// the snapshot respects all ignore layers (global, repo-level, per-dir).
+fn load_base_ignores(root: &Path) -> Arc<GitIgnoreFile> {
+    let mut ignores = GitIgnoreFile::empty();
+
+    // 1. Global gitignore: check git config core.excludesFile, then XDG default
+    let global_path = Command::new("git")
+        .current_dir(root)
+        .args(["config", "--get", "core.excludesFile"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if p.is_empty() {
+                    None
+                } else {
+                    // Expand ~ in path
+                    Some(if let Some(stripped) = p.strip_prefix("~/") {
+                        dirs::home_dir().unwrap_or_default().join(stripped)
+                    } else {
+                        PathBuf::from(p)
+                    })
+                }
+            } else {
+                None
+            }
+        })
+        .or_else(|| dirs::config_dir().map(|d| d.join("git").join("ignore")));
+
+    if let Some(path) = global_path {
+        if let Ok(chained) = ignores.chain_with_file("", path) {
+            ignores = chained;
+        }
+    }
+
+    // 2. .git/info/exclude
+    let exclude_path = root.join(".git").join("info").join("exclude");
+    if let Ok(chained) = ignores.chain_with_file("", exclude_path) {
+        ignores = chained;
+    }
+
+    ignores
 }
 
 /// Creates minimal UserSettings for agentjj operations.
@@ -1411,6 +1480,256 @@ impl Repo {
         Ok(())
     }
 
+    /// Commit the working copy via jj-lib: snapshot, run invariants, commit
+    /// transaction, export to git, and save TypedChange metadata.
+    pub fn commit_working_copy(&mut self, opts: CommitOptions) -> Result<CommitResult> {
+        let settings = create_minimal_settings()?;
+        let store_factories = get_store_factories();
+        let wc_factories = get_working_copy_factories();
+
+        // Load fresh workspace (not cached — we need &mut for mutation)
+        let mut workspace = Workspace::load(&settings, &self.root, &store_factories, &wc_factories)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to load workspace: {}", e),
+            })?;
+
+        // Grab owned values before taking &mut workspace
+        let workspace_name = workspace.workspace_name().to_owned();
+        let repo = workspace
+            .repo_loader()
+            .load_at_head()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to load repository: {}", e),
+            })?;
+
+        // Get WC commit and parent tree for diffing
+        let wc_commit_id = repo
+            .view()
+            .get_wc_commit_id(&workspace_name)
+            .cloned()
+            .ok_or_else(|| Error::Repository {
+                message: "no working copy commit found".into(),
+            })?;
+
+        let wc_commit = repo
+            .store()
+            .get_commit(&wc_commit_id)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to get working copy commit: {}", e),
+            })?;
+
+        let parent_tree = wc_commit
+            .parent_tree(&*repo)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to get parent tree: {}", e),
+            })?;
+
+        // Snapshot the working copy to capture filesystem changes
+        let mut locked_ws =
+            workspace
+                .start_working_copy_mutation()
+                .map_err(|e| Error::Repository {
+                    message: format!("failed to start working copy mutation: {}", e),
+                })?;
+
+        let snapshot_options = SnapshotOptions {
+            base_ignores: load_base_ignores(&self.root),
+            progress: None,
+            start_tracking_matcher: &EverythingMatcher,
+            force_tracking_matcher: &NothingMatcher,
+            max_new_file_size: 1_000_000_000,
+        };
+
+        let (new_tree, _stats) = locked_ws
+            .locked_wc()
+            .snapshot(&snapshot_options)
+            .block_on()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to snapshot working copy: {}", e),
+            })?;
+
+        // Diff parent tree vs new tree to get files_changed
+        let mut files_changed = Vec::new();
+        let diff_iter =
+            jj_lib::merged_tree::TreeDiffIterator::new(&parent_tree, &new_tree, &EverythingMatcher);
+        for entry in diff_iter {
+            files_changed.push(entry.path.as_internal_file_string().to_string());
+        }
+
+        // If nothing changed, bail early
+        if files_changed.is_empty() {
+            locked_ws
+                .finish(repo.op_id().clone())
+                .map_err(|e| Error::Repository {
+                    message: format!("failed to finish working copy: {}", e),
+                })?;
+            return Err(Error::Repository {
+                message: "nothing to commit - working tree clean".into(),
+            });
+        }
+
+        // Run invariants between snapshot and commit (safe: no commit yet)
+        let invariants = if opts.run_invariants && self.has_manifest() {
+            match self.run_invariants(InvariantTrigger::PreCommit) {
+                Ok(results) => results,
+                Err((name, cmd, code, stdout, stderr)) => {
+                    // Finish locked workspace before returning error (best-effort:
+                    // if this fails the working copy may need manual recovery)
+                    if let Err(e) = locked_ws.finish(repo.op_id().clone()) {
+                        eprintln!("warning: failed to release working copy lock: {}", e);
+                    }
+                    return Err(Error::InvariantFailed {
+                        name,
+                        command: cmd,
+                        exit_code: code,
+                        stdout,
+                        stderr,
+                    });
+                }
+            }
+        } else {
+            HashMap::new()
+        };
+
+        // Start jj-lib transaction
+        let mut tx = repo.start_transaction();
+
+        // Rewrite WC commit with the snapshot tree and commit message
+        let committed = tx
+            .repo_mut()
+            .rewrite_commit(&wc_commit)
+            .set_tree(new_tree)
+            .set_description(&opts.message)
+            .write()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to write commit: {}", e),
+            })?;
+
+        // Move the jj bookmark for the current git branch
+        if let Some(branch_name) = get_current_git_branch(&self.root) {
+            let ref_name: &jj_lib::ref_name::RefName = branch_name.as_str().as_ref();
+            tx.repo_mut().set_local_bookmark_target(
+                ref_name,
+                jj_lib::op_store::RefTarget::normal(committed.id().clone()),
+            );
+        }
+
+        // Create new empty WC commit (jj model: @ is always in-progress)
+        if !opts.no_new {
+            let new_wc_commit = tx
+                .repo_mut()
+                .new_commit(vec![committed.id().clone()], committed.tree())
+                .write()
+                .map_err(|e| Error::Repository {
+                    message: format!("failed to create new working copy commit: {}", e),
+                })?;
+            tx.repo_mut()
+                .set_wc_commit(workspace_name.clone(), new_wc_commit.id().clone())
+                .map_err(|e| Error::Repository {
+                    message: format!("failed to set working copy: {}", e),
+                })?;
+        } else {
+            tx.repo_mut()
+                .set_wc_commit(workspace_name.clone(), committed.id().clone())
+                .map_err(|e| Error::Repository {
+                    message: format!("failed to set working copy: {}", e),
+                })?;
+        }
+
+        // Rebase any descendant commits
+        tx.repo_mut()
+            .rebase_descendants()
+            .map_err(|e| Error::Repository {
+                message: format!("failed to rebase descendants: {}", e),
+            })?;
+
+        // Export jj refs to git (syncs bookmarks → git branches)
+        let _ = jj_lib::git::export_refs(tx.repo_mut());
+
+        // Commit the transaction
+        let new_repo = tx.commit("commit").map_err(|e| Error::Repository {
+            message: format!("failed to commit transaction: {}", e),
+        })?;
+
+        // Persist working copy state
+        locked_ws
+            .finish(new_repo.op_id().clone())
+            .map_err(|e| Error::Repository {
+                message: format!("failed to finish working copy: {}", e),
+            })?;
+
+        // Sync git state directly (in colocated mode, jj detaches HEAD and
+        // export_refs may not update the git branch in all scenarios)
+        let commit_hex = committed.id().hex();
+        if let Some(branch) = get_current_git_branch(&self.root) {
+            // Move the git branch ref to the committed change
+            let update_ref = Command::new("git")
+                .current_dir(&self.root)
+                .args(["update-ref", &format!("refs/heads/{}", branch), &commit_hex])
+                .output();
+            if let Err(e) = update_ref {
+                eprintln!(
+                    "warning: failed to update git ref for branch '{}': {}",
+                    branch, e
+                );
+            }
+            // Re-attach HEAD to the branch (jj colocated mode detaches HEAD)
+            let symbolic_ref = Command::new("git")
+                .current_dir(&self.root)
+                .args(["symbolic-ref", "HEAD", &format!("refs/heads/{}", branch)])
+                .output();
+            if let Err(e) = symbolic_ref {
+                eprintln!(
+                    "warning: failed to set git HEAD to branch '{}': {}",
+                    branch, e
+                );
+            }
+        }
+
+        // Save TypedChange metadata
+        let mut typed_change =
+            TypedChange::new(committed.change_id().hex(), opts.change_type, &opts.message)
+                .with_files(files_changed.clone());
+
+        if let Some(category) = opts.category {
+            typed_change = typed_change.with_category(category);
+        }
+        if opts.breaking {
+            typed_change = typed_change.breaking();
+        }
+
+        typed_change.invariants = InvariantsResult {
+            checked: invariants.keys().cloned().collect(),
+            status: if invariants.is_empty() {
+                InvariantStatus::Skipped
+            } else if invariants.values().all(|s| *s == InvariantStatus::Passed) {
+                InvariantStatus::Passed
+            } else {
+                InvariantStatus::Failed
+            },
+            details: invariants.clone(),
+        };
+
+        self.save_typed_change(&typed_change)?;
+
+        // Invalidate cached workspace
+        self.workspace = None;
+
+        let short_commit = if commit_hex.len() > 12 {
+            &commit_hex[..12]
+        } else {
+            &commit_hex
+        };
+
+        Ok(CommitResult {
+            change_id: committed.change_id().hex(),
+            commit_id: short_commit.to_string(),
+            operation_id: new_repo.op_id().hex(),
+            files_changed,
+            invariants,
+        })
+    }
+
     /// Get the raw ASCII graph output.
     /// Note: This still shells out to jj for complex graph rendering.
     #[allow(clippy::needless_borrows_for_generic_args)]
@@ -1445,6 +1764,65 @@ impl Repo {
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
+}
+
+/// Get the current git branch name. In jj colocated mode, HEAD may be
+/// detached, so we fall back to checking the configured default branch
+/// and then common branch names.
+fn get_current_git_branch(root: &Path) -> Option<String> {
+    // Try symbolic ref first (normal git state)
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !branch.is_empty() {
+            return Some(branch);
+        }
+    }
+
+    // Fallback for detached HEAD: check git config for default branch name
+    let config_output = Command::new("git")
+        .current_dir(root)
+        .args(["config", "--get", "init.defaultBranch"])
+        .output()
+        .ok();
+    if let Some(co) = config_output {
+        if co.status.success() {
+            let configured = String::from_utf8_lossy(&co.stdout).trim().to_string();
+            if !configured.is_empty() {
+                let verify = Command::new("git")
+                    .current_dir(root)
+                    .args([
+                        "rev-parse",
+                        "--verify",
+                        &format!("refs/heads/{}", configured),
+                    ])
+                    .output()
+                    .ok();
+                if verify.map(|v| v.status.success()).unwrap_or(false) {
+                    return Some(configured);
+                }
+            }
+        }
+    }
+
+    // Last resort: check common default branch names
+    for name in &["main", "master"] {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(["rev-parse", "--verify", &format!("refs/heads/{}", name)])
+            .output()
+            .ok()?;
+        if output.status.success() {
+            return Some(name.to_string());
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

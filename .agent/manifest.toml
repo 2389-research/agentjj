@@ -9,6 +9,9 @@ vcs = "jj"
 [interfaces]
 
 [invariants]
+format = { cmd = "cargo fmt --check", on = ["pre-commit"] }
+lint = { cmd = "cargo clippy -- -D warnings", on = ["pre-commit", "pre-push"] }
+test = { cmd = "cargo test", on = ["pre-push"] }
 
 [permissions]
 allow_change = []

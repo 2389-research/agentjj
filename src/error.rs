@@ -32,7 +32,7 @@ pub enum Error {
         operation_id: String,
     },
 
-    #[error("invariant {name} failed")]
+    #[error("invariant '{name}' failed (command: `{command}`, exit code: {exit_code})")]
     InvariantFailed {
         name: String,
         command: String,

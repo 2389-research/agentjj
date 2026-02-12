@@ -72,7 +72,9 @@ fn help_shows_subcommands() {
         .success()
         .stdout(predicate::str::contains("status"))
         .stdout(predicate::str::contains("orient"))
-        .stdout(predicate::str::contains("schema"));
+        .stdout(predicate::str::contains("schema"))
+        .stdout(predicate::str::contains("skill"))
+        .stdout(predicate::str::contains("quickstart"));
 }
 
 // =============================================================================
@@ -370,4 +372,338 @@ fn subcommand_help_works() {
         .assert()
         .success()
         .stdout(predicate::str::contains("JSON schemas"));
+
+    agentjj()
+        .args(["skill", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("skill documentation"));
+
+    agentjj()
+        .args(["quickstart", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("getting-started"));
+}
+
+// =============================================================================
+// Skill command tests
+// =============================================================================
+
+#[test]
+fn skill_returns_success() {
+    agentjj()
+        .arg("skill")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("agentjj"));
+}
+
+#[test]
+fn skill_json_returns_valid_json() {
+    let output = agentjj().args(["--json", "skill"]).assert().success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Skill output should be valid JSON");
+
+    assert!(json["content"].is_string(), "Should have content field");
+    assert_eq!(
+        json["format"].as_str(),
+        Some("markdown"),
+        "Should have format: markdown"
+    );
+}
+
+#[test]
+fn skill_works_outside_repo() {
+    let tmp = TempDir::new().unwrap();
+
+    agentjj()
+        .arg("skill")
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("agentjj"));
+}
+
+// =============================================================================
+// Quickstart command tests
+// =============================================================================
+
+#[test]
+fn quickstart_returns_success() {
+    agentjj()
+        .arg("quickstart")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Quick Start"));
+}
+
+#[test]
+fn quickstart_json_returns_valid_json() {
+    let output = agentjj().args(["--json", "quickstart"]).assert().success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Quickstart output should be valid JSON");
+
+    assert!(json["steps"].is_array(), "Should have steps array");
+    assert!(json["tips"].is_array(), "Should have tips array");
+    assert!(
+        json["steps"].as_array().unwrap().len() == 6,
+        "Should have exactly 6 steps"
+    );
+}
+
+#[test]
+fn quickstart_works_outside_repo() {
+    let tmp = TempDir::new().unwrap();
+
+    agentjj()
+        .arg("quickstart")
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Quick Start"));
+}
+
+// =============================================================================
+// Commit command tests
+// =============================================================================
+
+/// Helper to create a temp repo with an initial git commit so commit tests
+/// have a parent to diff against. Also triggers jj auto-colocate.
+fn setup_temp_repo_for_commit() -> Option<TempDir> {
+    let tmp = TempDir::new().ok()?;
+
+    // Initialize git repo
+    let status = Command::new("git")
+        .args(["init"])
+        .current_dir(tmp.path())
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(tmp.path())
+        .status()
+        .ok()?;
+
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(tmp.path())
+        .status()
+        .ok()?;
+
+    // Create initial file and commit so there's a parent
+    std::fs::write(tmp.path().join("README.md"), "# Test Repository\n").ok()?;
+
+    Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(tmp.path())
+        .status()
+        .ok()?;
+
+    Command::new("git")
+        .args(["commit", "-m", "initial commit"])
+        .current_dir(tmp.path())
+        .status()
+        .ok()?;
+
+    // Run agentjj status to trigger auto-colocate
+    let output = agentjj()
+        .arg("status")
+        .current_dir(tmp.path())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(tmp)
+}
+
+#[test]
+fn commit_with_changes_succeeds() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create a new file to commit
+    std::fs::write(tmp.path().join("hello.txt"), "hello world\n").unwrap();
+
+    agentjj()
+        .args(["commit", "-m", "feat: add hello file"])
+        .current_dir(tmp.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Committed"));
+}
+
+#[test]
+fn commit_json_output() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create a new file to commit
+    std::fs::write(tmp.path().join("test.txt"), "test content\n").unwrap();
+
+    let output = agentjj()
+        .args(["--json", "commit", "-m", "feat: add test file"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Commit output should be valid JSON");
+
+    assert_eq!(json["committed"], true, "Should have committed: true");
+    assert!(json["commit"].is_string(), "Should have commit hash");
+    assert!(json["message"].is_string(), "Should have message");
+    assert!(json["change_id"].is_string(), "Should have change_id");
+    assert!(
+        json["files_changed"].is_array(),
+        "Should have files_changed array"
+    );
+}
+
+#[test]
+fn commit_nothing_to_commit() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create .agent/.gitignore so TypedChange files are excluded from snapshots
+    std::fs::create_dir_all(tmp.path().join(".agent")).unwrap();
+    std::fs::write(
+        tmp.path().join(".agent/.gitignore"),
+        "changes/\ncheckpoints/\n",
+    )
+    .unwrap();
+
+    // First commit syncs jj state (README.md + .agent/.gitignore are new to jj)
+    agentjj()
+        .args(["commit", "-m", "initial sync", "--no-invariants"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // Now with no new changes, commit should fail
+    agentjj()
+        .args(["commit", "-m", "empty commit", "--no-invariants"])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nothing to commit"));
+}
+
+#[test]
+fn commit_with_type_flag() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create .agent dir for metadata storage
+    std::fs::create_dir_all(tmp.path().join(".agent/changes")).ok();
+
+    // Create a new file to commit
+    std::fs::write(tmp.path().join("refactored.rs"), "fn main() {}\n").unwrap();
+
+    agentjj()
+        .args([
+            "commit",
+            "-m",
+            "refactor: clean up code",
+            "--type",
+            "refactor",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // Verify TypedChange metadata was saved
+    let changes_dir = tmp.path().join(".agent/changes");
+    assert!(
+        changes_dir.exists(),
+        "Changes directory should exist after commit"
+    );
+
+    // There should be at least one .toml file in the changes directory
+    let change_files: Vec<_> = std::fs::read_dir(&changes_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "toml")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    assert!(
+        !change_files.is_empty(),
+        "Should have at least one typed change file"
+    );
+
+    // Read and verify the change file
+    let content = std::fs::read_to_string(change_files[0].path()).unwrap();
+    assert!(
+        content.contains("refactor"),
+        "Change file should contain type 'refactor'"
+    );
+}
+
+#[test]
+fn commit_invariant_failure_blocks() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Set up a manifest with a failing invariant
+    std::fs::create_dir_all(tmp.path().join(".agent")).ok();
+    std::fs::write(
+        tmp.path().join(".agent/manifest.toml"),
+        r#"
+[repo]
+name = "test-repo"
+
+[invariants]
+always_fail = { cmd = "false", on = ["pre-commit"] }
+"#,
+    )
+    .unwrap();
+
+    // Create a new file to commit
+    std::fs::write(tmp.path().join("should_not_commit.txt"), "blocked\n").unwrap();
+
+    // Commit should fail due to invariant
+    agentjj()
+        .args(["commit", "-m", "should be blocked"])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invariant").or(predicate::str::contains("Invariant")));
+
+    // Verify the file was NOT committed to git
+    let log_output = Command::new("git")
+        .args(["log", "--oneline", "-1"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    let log_str = String::from_utf8_lossy(&log_output.stdout);
+    assert!(
+        !log_str.contains("should be blocked"),
+        "Failed invariant should prevent commit from appearing in git log"
+    );
 }

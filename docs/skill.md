@@ -124,6 +124,8 @@ agentjj push --pr --title "Fix bug"        # Create PR
 agentjj schema                             # List all output schemas
 agentjj schema --type context              # Show specific schema
 agentjj schema --type orient               # See orient output format
+agentjj skill                              # Full skill documentation
+agentjj quickstart                         # Concise getting-started guide
 ```
 
 ## JSON Mode
@@ -191,6 +193,8 @@ agentjj push --pr --title "OAuth login support"
 | `apply` | Apply intent transaction |
 | `push [--pr]` | Push and optionally create PR |
 | `schema [--type]` | Output schemas |
+| `skill` | Full skill documentation |
+| `quickstart` | Getting-started guide |
 | `init` | Initialize agentjj |
 | `manifest show/validate` | Manage manifest |
 
@@ -209,3 +213,5 @@ Symbol extraction: Python, Rust, JavaScript, TypeScript
 5. **Check `affected` before changing** - Know the blast radius
 6. **`suggest` when stuck** - Let the tool guide you
 7. **`validate` before pushing** - Catch issues early
+8. **`skill` for full docs** - The binary is the documentation
+9. **`quickstart` for onboarding** - 6 steps to productivity
