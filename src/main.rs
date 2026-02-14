@@ -1384,16 +1384,18 @@ fn cmd_orient(json: bool) -> Result<()> {
             "symbol_query": ["python", "rust", "javascript", "typescript"],
             "commands": [
                 "status", "read", "symbol", "context", "apply",
-                "change", "push", "orient", "checkpoint", "undo",
-                "bulk", "files", "diff", "affected", "validate", "suggest"
+                "change", "commit", "push", "orient", "checkpoint", "undo",
+                "bulk", "files", "diff", "affected", "validate", "suggest",
+                "graph", "tag", "schema", "skill", "quickstart"
             ],
         },
         "quick_start": {
             "read_file": "agentjj read <path>",
             "query_symbol": "agentjj symbol <file>::<name>",
             "get_context": "agentjj context <file>::<name>",
+            "commit_changes": "agentjj commit -m 'feat: description'",
             "make_change": "agentjj apply --intent '...' --type behavioral --patch <file>",
-            "save_checkpoint": "agentjj checkpoint <name>",
+            "save_checkpoint": "agentjj checkpoint create <name>",
         },
     });
 
@@ -1562,59 +1564,21 @@ fn cmd_checkpoint_list(json: bool) -> Result<()> {
 }
 
 fn chrono_lite_now() -> String {
-    // Simple ISO 8601 timestamp without chrono dependency
     use std::time::{SystemTime, UNIX_EPOCH};
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    let secs = duration.as_secs();
-
-    // Convert unix timestamp to ISO 8601 format
-    // Algorithm: days since epoch -> year/month/day, seconds -> hours:minutes:seconds
-    let days = secs / 86400;
-    let time_secs = secs % 86400;
-    let hours = time_secs / 3600;
-    let minutes = (time_secs % 3600) / 60;
-    let seconds = time_secs % 60;
-
-    // Calculate year/month/day from days since 1970-01-01
-    let mut year = 1970;
-    let mut remaining_days = days as i64;
-
-    loop {
-        let days_in_year = if is_leap_year(year) { 366 } else { 365 };
-        if remaining_days < days_in_year {
-            break;
-        }
-        remaining_days -= days_in_year;
-        year += 1;
-    }
-
-    let is_leap = is_leap_year(year);
-    let days_in_months: [i64; 12] = if is_leap {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut month = 1;
-    for days_in_month in days_in_months.iter() {
-        if remaining_days < *days_in_month {
-            break;
-        }
-        remaining_days -= *days_in_month;
-        month += 1;
-    }
-    let day = remaining_days + 1;
-
+    let secs = duration.as_secs() as i64;
+    let days = secs.div_euclid(86400);
+    let time_of_day = secs.rem_euclid(86400);
+    let (year, month, day) = agentjj::repo::days_to_ymd(days);
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
         year, month, day, hours, minutes, seconds
     )
-}
-
-fn is_leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
 /// Undo operations or restore to checkpoint
@@ -2575,8 +2539,8 @@ fn cmd_graph_mermaid(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Re
     for node in &nodes {
         // Escape quotes in description and truncate
         let desc = node.description.replace('"', "'").replace('\n', " ");
-        let truncated_desc = if desc.len() > 40 {
-            format!("{}...", &desc[..37])
+        let truncated_desc = if desc.chars().count() > 40 {
+            format!("{}...", desc.chars().take(37).collect::<String>())
         } else {
             desc.clone()
         };
@@ -2635,8 +2599,8 @@ fn cmd_graph_dot(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result
     for node in &nodes {
         // Escape quotes in description and truncate
         let desc = node.description.replace('"', "\\\"").replace('\n', "\\n");
-        let truncated_desc = if desc.len() > 40 {
-            format!("{}...", &desc[..37])
+        let truncated_desc = if desc.chars().count() > 40 {
+            format!("{}...", desc.chars().take(37).collect::<String>())
         } else {
             desc.clone()
         };
@@ -2720,7 +2684,7 @@ fn cmd_quickstart(json: bool) -> Result<()> {
         ),
         (
             "checkpoint",
-            "agentjj checkpoint <name>",
+            "agentjj checkpoint create <name>",
             "Save a named restore point before making changes",
         ),
         (
@@ -2835,7 +2799,7 @@ fn cmd_suggest(json: bool) -> Result<()> {
 
         suggestions.push(serde_json::json!({
             "action": "checkpoint",
-            "command": "agentjj checkpoint work-in-progress",
+            "command": "agentjj checkpoint create work-in-progress",
             "reason": "Save a restore point before continuing",
             "priority": "medium",
         }));
@@ -2895,35 +2859,6 @@ mod tests {
             "Expected ISO 8601 format, got: {}",
             timestamp
         );
-    }
-
-    #[test]
-    fn test_is_leap_year_divisible_by_400() {
-        assert!(
-            is_leap_year(2000),
-            "2000 should be a leap year (divisible by 400)"
-        );
-    }
-
-    #[test]
-    fn test_is_leap_year_not_divisible_by_400_but_by_100() {
-        assert!(
-            !is_leap_year(1900),
-            "1900 should not be a leap year (divisible by 100 but not 400)"
-        );
-    }
-
-    #[test]
-    fn test_is_leap_year_divisible_by_4() {
-        assert!(
-            is_leap_year(2024),
-            "2024 should be a leap year (divisible by 4)"
-        );
-    }
-
-    #[test]
-    fn test_is_leap_year_not_divisible_by_4() {
-        assert!(!is_leap_year(2023), "2023 should not be a leap year");
     }
 
     #[test]

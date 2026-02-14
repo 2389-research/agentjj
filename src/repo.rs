@@ -18,7 +18,6 @@ use jj_lib::settings::UserSettings;
 use jj_lib::working_copy::SnapshotOptions;
 use jj_lib::workspace::{default_working_copy_factories, WorkingCopyFactories, Workspace};
 use pollster::FutureExt as _;
-use serde::Deserialize;
 
 use crate::change::{ChangeCategory, ChangeType, InvariantStatus, InvariantsResult, TypedChange};
 use crate::error::{ConflictDetail, Error, Result};
@@ -33,27 +32,6 @@ pub struct Repo {
     workspace: Option<Workspace>,
     /// Cached manifest (loaded lazily)
     manifest: Option<Manifest>,
-}
-
-/// Output from `jj log` with template (for future JSON parsing)
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct JjLogEntry {
-    change_id: String,
-    commit_id: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    empty: bool,
-    #[serde(default)]
-    conflict: bool,
-}
-
-/// Output from `jj op log` (for future JSON parsing)
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct JjOpLogEntry {
-    id: String,
 }
 
 /// Structured log entry for graph commands and other operations.
@@ -1420,126 +1398,118 @@ impl Repo {
         let mut entries = Vec::new();
         let mut count = 0;
 
-        // Get heads and traverse
-        for head_id in repo.view().heads() {
+        // Collect all heads into a single traversal to avoid duplicates
+        let mut to_visit: Vec<_> = repo.view().heads().iter().cloned().collect();
+        let mut visited = std::collections::HashSet::new();
+
+        while let Some(commit_id) = to_visit.pop() {
             if !all && count >= limit {
                 break;
             }
 
-            let mut to_visit = vec![head_id.clone()];
-            let mut visited = std::collections::HashSet::new();
+            if !visited.insert(commit_id.clone()) {
+                continue;
+            }
 
-            while let Some(commit_id) = to_visit.pop() {
-                if !all && count >= limit {
-                    break;
-                }
+            let commit = match repo.store().get_commit(&commit_id) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
 
-                if !visited.insert(commit_id.clone()) {
-                    continue;
-                }
+            // Skip root commit
+            if commit.change_id().hex().starts_with("zzzzzzzz") {
+                continue;
+            }
 
-                let commit = match repo.store().get_commit(&commit_id) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
+            let is_working_copy = wc_commit_id.map(|id| id == &commit_id).unwrap_or(false);
 
-                // Skip root commit
-                if commit.change_id().hex().starts_with("zzzzzzzz") {
-                    continue;
-                }
-
-                let is_working_copy = wc_commit_id.map(|id| id == &commit_id).unwrap_or(false);
-
-                let parent_change_ids: Vec<String> = commit
-                    .parent_ids()
-                    .iter()
-                    .filter_map(|pid| {
-                        repo.store().get_commit(pid).ok().map(|p| {
-                            let hex = p.change_id().hex();
-                            if hex.len() > 8 {
-                                hex[..8].to_string()
-                            } else {
-                                hex
-                            }
-                        })
+            let parent_change_ids: Vec<String> = commit
+                .parent_ids()
+                .iter()
+                .filter_map(|pid| {
+                    repo.store().get_commit(pid).ok().map(|p| {
+                        let hex = p.change_id().hex();
+                        if hex.len() > 8 {
+                            hex[..8].to_string()
+                        } else {
+                            hex
+                        }
                     })
-                    .collect();
+                })
+                .collect();
 
-                let change_hex = commit.change_id().hex();
-                let commit_hex = commit_id.hex();
+            let change_hex = commit.change_id().hex();
+            let commit_hex = commit_id.hex();
 
-                // Extract author timestamp as ISO 8601 string
-                let author_sig = commit.author();
-                let timestamp = {
-                    let millis = author_sig.timestamp.timestamp.0;
-                    let secs = millis / 1000;
-                    let tz_offset_mins = author_sig.timestamp.tz_offset;
-                    let tz_offset_secs = (tz_offset_mins as i64) * 60;
-                    // Format as ISO 8601 with timezone offset
-                    let abs_offset = tz_offset_mins.unsigned_abs();
-                    let tz_sign = if tz_offset_mins >= 0 { '+' } else { '-' };
-                    let tz_hours = abs_offset / 60;
-                    let tz_mins = abs_offset % 60;
-                    // Compute date/time from unix timestamp adjusted for timezone
-                    let adjusted_secs = secs + tz_offset_secs;
-                    let days_since_epoch = adjusted_secs.div_euclid(86400);
-                    let time_of_day = adjusted_secs.rem_euclid(86400);
-                    let (year, month, day) = days_to_ymd(days_since_epoch);
-                    let hours = time_of_day / 3600;
-                    let minutes = (time_of_day % 3600) / 60;
-                    let seconds = time_of_day % 60;
-                    Some(format!(
-                        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
-                        year, month, day, hours, minutes, seconds, tz_sign, tz_hours, tz_mins
-                    ))
-                };
+            // Extract author timestamp as ISO 8601 string
+            let author_sig = commit.author();
+            let timestamp = {
+                let millis = author_sig.timestamp.timestamp.0;
+                let secs = millis / 1000;
+                let tz_offset_mins = author_sig.timestamp.tz_offset;
+                let tz_offset_secs = (tz_offset_mins as i64) * 60;
+                let abs_offset = tz_offset_mins.unsigned_abs();
+                let tz_sign = if tz_offset_mins >= 0 { '+' } else { '-' };
+                let tz_hours = abs_offset / 60;
+                let tz_mins = abs_offset % 60;
+                let adjusted_secs = secs + tz_offset_secs;
+                let days_since_epoch = adjusted_secs.div_euclid(86400);
+                let time_of_day = adjusted_secs.rem_euclid(86400);
+                let (year, month, day) = days_to_ymd(days_since_epoch);
+                let hours = time_of_day / 3600;
+                let minutes = (time_of_day % 3600) / 60;
+                let seconds = time_of_day % 60;
+                Some(format!(
+                    "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
+                    year, month, day, hours, minutes, seconds, tz_sign, tz_hours, tz_mins
+                ))
+            };
 
-                // Extract author name, falling back to email
-                let author = {
-                    let name = &author_sig.name;
-                    let email = &author_sig.email;
-                    if !name.is_empty() {
-                        Some(name.clone())
-                    } else if !email.is_empty() {
-                        Some(email.clone())
-                    } else {
-                        None
-                    }
-                };
+            // Extract author name, falling back to email
+            let author = {
+                let name = &author_sig.name;
+                let email = &author_sig.email;
+                if !name.is_empty() {
+                    Some(name.clone())
+                } else if !email.is_empty() {
+                    Some(email.clone())
+                } else {
+                    None
+                }
+            };
 
-                let full_commit_id = commit_hex.clone();
+            let full_commit_id = commit_hex.clone();
 
-                entries.push(LogEntry {
-                    change_id: if change_hex.len() > 8 {
-                        change_hex[..8].to_string()
-                    } else {
-                        change_hex
-                    },
-                    commit_id: if commit_hex.len() > 8 {
-                        commit_hex[..8].to_string()
-                    } else {
-                        commit_hex
-                    },
-                    description: commit
-                        .description()
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .to_string(),
-                    parent_change_ids,
-                    is_working_copy,
-                    timestamp,
-                    author,
-                    full_commit_id,
-                });
+            entries.push(LogEntry {
+                change_id: if change_hex.len() > 8 {
+                    change_hex[..8].to_string()
+                } else {
+                    change_hex
+                },
+                commit_id: if commit_hex.len() > 8 {
+                    commit_hex[..8].to_string()
+                } else {
+                    commit_hex
+                },
+                description: commit
+                    .description()
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .to_string(),
+                parent_change_ids,
+                is_working_copy,
+                timestamp,
+                author,
+                full_commit_id,
+            });
 
-                count += 1;
+            count += 1;
 
-                // Add parents to visit
-                for parent_id in commit.parent_ids() {
-                    if !visited.contains(parent_id) {
-                        to_visit.push(parent_id.clone());
-                    }
+            // Add parents to visit
+            for parent_id in commit.parent_ids() {
+                if !visited.contains(parent_id) {
+                    to_visit.push(parent_id.clone());
                 }
             }
         }
@@ -1991,7 +1961,7 @@ impl Repo {
 }
 
 /// Convert days since Unix epoch to (year, month, day) using civil calendar arithmetic.
-fn days_to_ymd(days: i64) -> (i64, u32, u32) {
+pub fn days_to_ymd(days: i64) -> (i64, u32, u32) {
     // Algorithm from Howard Hinnant's chrono-compatible date calculations
     let z = days + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
