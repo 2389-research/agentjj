@@ -178,14 +178,10 @@ enum Commands {
     /// Complete repository orientation for agents - everything you need to start working
     Orient,
 
-    /// Create a named checkpoint for easy recovery
+    /// Checkpoint operations (create, list)
     Checkpoint {
-        /// Checkpoint name
-        name: String,
-
-        /// Description of what state this captures
-        #[arg(short, long)]
-        description: Option<String>,
+        #[command(subcommand)]
+        action: CheckpointAction,
     },
 
     /// Undo the last operation (restore to previous state)
@@ -360,6 +356,22 @@ enum ChangeAction {
     },
 }
 
+#[derive(Subcommand)]
+enum CheckpointAction {
+    /// Create a named checkpoint for easy recovery
+    Create {
+        /// Checkpoint name
+        name: String,
+
+        /// Description of what state this captures
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+
+    /// List all checkpoints
+    List,
+}
+
 fn main() {
     let cli = Cli::parse();
     let json_mode = cli.json;
@@ -440,7 +452,12 @@ fn run_command(cli: Cli) -> Result<()> {
             push,
         } => cmd_tag(name, message, force, push, cli.json),
         Commands::Orient => cmd_orient(cli.json),
-        Commands::Checkpoint { name, description } => cmd_checkpoint(name, description, cli.json),
+        Commands::Checkpoint { action } => match action {
+            CheckpointAction::Create { name, description } => {
+                cmd_checkpoint(name, description, cli.json)
+            }
+            CheckpointAction::List => cmd_checkpoint_list(cli.json),
+        },
         Commands::Undo { steps, to, dry_run } => cmd_undo(steps, to, dry_run, cli.json),
         Commands::Bulk { action } => cmd_bulk(action, cli.json),
         Commands::Files { pattern, symbols } => cmd_files(pattern, symbols, cli.json),
@@ -1408,7 +1425,7 @@ fn cmd_orient(json: bool) -> Result<()> {
         println!("  agentjj symbol <file>           # List symbols in file");
         println!("  agentjj context <file>::<name>  # Get symbol context");
         println!("  agentjj bulk read <files...>    # Read multiple files");
-        println!("  agentjj checkpoint <name>       # Save restore point");
+        println!("  agentjj checkpoint create <name> # Save restore point");
     }
 
     Ok(())
@@ -1449,6 +1466,87 @@ fn cmd_checkpoint(name: String, description: Option<String>, json: bool) -> Resu
         println!("✓ Checkpoint '{}' created", name);
         println!("  change: {}", &change_id[..12.min(change_id.len())]);
         println!("  restore with: agentjj undo --to {}", name);
+    }
+
+    Ok(())
+}
+
+/// List all checkpoints sorted by created_at descending
+fn cmd_checkpoint_list(json: bool) -> Result<()> {
+    let repo = Repo::discover()?;
+    let checkpoints_dir = repo.root().join(".agent/checkpoints");
+
+    if !checkpoints_dir.exists() || !checkpoints_dir.is_dir() {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "checkpoints": []
+                }))?
+            );
+        } else {
+            println!("No checkpoints found.");
+        }
+        return Ok(());
+    }
+
+    let mut checkpoints: Vec<serde_json::Value> = Vec::new();
+
+    for entry in std::fs::read_dir(&checkpoints_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            let content = std::fs::read_to_string(&path)?;
+            if let Ok(checkpoint) = serde_json::from_str::<serde_json::Value>(&content) {
+                checkpoints.push(checkpoint);
+            }
+        }
+    }
+
+    if checkpoints.is_empty() {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "checkpoints": []
+                }))?
+            );
+        } else {
+            println!("No checkpoints found.");
+        }
+        return Ok(());
+    }
+
+    // Sort by created_at descending
+    checkpoints.sort_by(|a, b| {
+        let a_time = a["created_at"].as_str().unwrap_or("");
+        let b_time = b["created_at"].as_str().unwrap_or("");
+        b_time.cmp(a_time)
+    });
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "checkpoints": checkpoints
+            }))?
+        );
+    } else {
+        println!("Checkpoints:");
+        for cp in &checkpoints {
+            let name = cp["name"].as_str().unwrap_or("(unknown)");
+            let created_at = cp["created_at"].as_str().unwrap_or("");
+            // Format timestamp for display: "2026-02-14T10:23:15Z" -> "2026-02-14 10:23:15"
+            let display_time = created_at
+                .replace('T', " ")
+                .trim_end_matches('Z')
+                .to_string();
+            let description = cp["description"]
+                .as_str()
+                .map(|d| format!("\"{}\"", d))
+                .unwrap_or_else(|| "(no description)".to_string());
+            println!("  {:<30} {}  {}", name, display_time, description);
+        }
     }
 
     Ok(())

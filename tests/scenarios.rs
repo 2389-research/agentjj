@@ -174,7 +174,7 @@ mod checkpoint_and_recovery {
         // Create a checkpoint
         agentjj()
             .current_dir(tmp.path())
-            .args(["checkpoint", "test-recovery", "-d", "Test checkpoint"])
+            .args(["checkpoint", "create", "test-recovery", "-d", "Test checkpoint"])
             .assert()
             .success()
             .stdout(predicate::str::contains(
@@ -210,7 +210,7 @@ mod checkpoint_and_recovery {
 
         agentjj()
             .current_dir(tmp.path())
-            .args(["--json", "checkpoint", "json-check"])
+            .args(["--json", "checkpoint", "create", "json-check"])
             .assert()
             .success()
             .stdout(predicate::str::contains(r#""created": true"#))
@@ -230,7 +230,7 @@ mod checkpoint_and_recovery {
 
         agentjj()
             .current_dir(tmp.path())
-            .args(["checkpoint", "recovery-point"])
+            .args(["checkpoint", "create", "recovery-point"])
             .assert()
             .success();
 
@@ -258,7 +258,7 @@ mod checkpoint_and_recovery {
 
         agentjj()
             .current_dir(tmp.path())
-            .args(["checkpoint", "json-recovery"])
+            .args(["checkpoint", "create", "json-recovery"])
             .assert()
             .success();
 
@@ -275,6 +275,218 @@ mod checkpoint_and_recovery {
         assert_eq!(json["dry_run"], true);
         assert_eq!(json["checkpoint"], "json-recovery");
         assert!(json.get("would_restore_to").is_some());
+    }
+
+    #[test]
+    fn list_checkpoints_empty() {
+        let tmp = setup_jj_repo();
+
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["init"])
+            .assert()
+            .success();
+
+        // List checkpoints when none exist
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["checkpoint", "list"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("No checkpoints found."));
+    }
+
+    #[test]
+    fn list_checkpoints_empty_json() {
+        let tmp = setup_jj_repo();
+
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["init"])
+            .assert()
+            .success();
+
+        let output = agentjj()
+            .current_dir(tmp.path())
+            .args(["--json", "checkpoint", "list"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&stdout).expect("Output should be valid JSON");
+
+        let checkpoints = json["checkpoints"]
+            .as_array()
+            .expect("checkpoints should be an array");
+        assert!(checkpoints.is_empty(), "Should have no checkpoints");
+    }
+
+    #[test]
+    fn list_checkpoints_shows_created() {
+        let tmp = setup_jj_repo();
+
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["init"])
+            .assert()
+            .success();
+
+        // Create two checkpoints
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["checkpoint", "create", "first-cp", "-d", "First checkpoint"])
+            .assert()
+            .success();
+
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["checkpoint", "create", "second-cp", "-d", "Second checkpoint"])
+            .assert()
+            .success();
+
+        // List checkpoints - should show both
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["checkpoint", "list"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Checkpoints:"))
+            .stdout(predicate::str::contains("first-cp"))
+            .stdout(predicate::str::contains("second-cp"))
+            .stdout(predicate::str::contains("\"First checkpoint\""))
+            .stdout(predicate::str::contains("\"Second checkpoint\""));
+    }
+
+    #[test]
+    fn list_checkpoints_json_returns_all_fields() {
+        let tmp = setup_jj_repo();
+
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["init"])
+            .assert()
+            .success();
+
+        // Create a checkpoint with description
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["checkpoint", "create", "full-cp", "-d", "Full checkpoint"])
+            .assert()
+            .success();
+
+        let output = agentjj()
+            .current_dir(tmp.path())
+            .args(["--json", "checkpoint", "list"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&stdout).expect("Output should be valid JSON");
+
+        let checkpoints = json["checkpoints"]
+            .as_array()
+            .expect("checkpoints should be an array");
+        assert_eq!(checkpoints.len(), 1, "Should have exactly one checkpoint");
+
+        let cp = &checkpoints[0];
+        assert_eq!(cp["name"], "full-cp", "Should have correct name");
+        assert_eq!(
+            cp["description"], "Full checkpoint",
+            "Should have correct description"
+        );
+        assert!(
+            cp["change_id"].is_string(),
+            "Should have change_id as string"
+        );
+        assert!(
+            cp["operation_id"].is_string(),
+            "Should have operation_id as string"
+        );
+        assert!(
+            cp["created_at"].is_string(),
+            "Should have created_at as string"
+        );
+    }
+
+    #[test]
+    fn list_checkpoints_no_description() {
+        let tmp = setup_jj_repo();
+
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["init"])
+            .assert()
+            .success();
+
+        // Create a checkpoint without description
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["checkpoint", "create", "no-desc-cp"])
+            .assert()
+            .success();
+
+        // List should show "(no description)"
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["checkpoint", "list"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("no-desc-cp"))
+            .stdout(predicate::str::contains("(no description)"));
+    }
+
+    #[test]
+    fn list_checkpoints_sorted_descending() {
+        let tmp = setup_jj_repo();
+
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["init"])
+            .assert()
+            .success();
+
+        // Create checkpoints in order (second will have a later timestamp)
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["checkpoint", "create", "older-cp", "-d", "Older"])
+            .assert()
+            .success();
+
+        // Small delay to ensure different timestamps
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        agentjj()
+            .current_dir(tmp.path())
+            .args(["checkpoint", "create", "newer-cp", "-d", "Newer"])
+            .assert()
+            .success();
+
+        let output = agentjj()
+            .current_dir(tmp.path())
+            .args(["--json", "checkpoint", "list"])
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&stdout).expect("Output should be valid JSON");
+
+        let checkpoints = json["checkpoints"]
+            .as_array()
+            .expect("checkpoints should be an array");
+        assert_eq!(checkpoints.len(), 2, "Should have two checkpoints");
+
+        // First should be newer (descending order)
+        assert_eq!(
+            checkpoints[0]["name"], "newer-cp",
+            "First checkpoint should be the newer one"
+        );
+        assert_eq!(
+            checkpoints[1]["name"], "older-cp",
+            "Second checkpoint should be the older one"
+        );
     }
 }
 
