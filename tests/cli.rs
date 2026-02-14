@@ -1123,3 +1123,84 @@ fn commit_without_paths_unchanged_behavior() {
         "Should include two.txt when --paths not used"
     );
 }
+
+#[test]
+fn commit_on_feature_branch_does_not_move_main() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create and switch to a feature branch
+    Command::new("git")
+        .args(["checkout", "-b", "feature-xyz"])
+        .current_dir(tmp.path())
+        .status()
+        .unwrap();
+
+    // Record where main points before our commit
+    let main_before = Command::new("git")
+        .args(["rev-parse", "main"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    let main_before_sha = String::from_utf8_lossy(&main_before.stdout)
+        .trim()
+        .to_string();
+
+    // Make a change on the feature branch
+    std::fs::write(tmp.path().join("feature.txt"), "feature work\n").unwrap();
+
+    agentjj()
+        .args(["commit", "-m", "feat: feature branch work"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // Verify main was NOT moved
+    let main_after = Command::new("git")
+        .args(["rev-parse", "main"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    let main_after_sha = String::from_utf8_lossy(&main_after.stdout)
+        .trim()
+        .to_string();
+
+    assert_eq!(
+        main_before_sha, main_after_sha,
+        "Committing on feature branch should not move main"
+    );
+}
+
+#[test]
+fn commit_on_detached_head_warns_about_git_sync() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Detach HEAD
+    Command::new("git")
+        .args(["checkout", "--detach", "HEAD"])
+        .current_dir(tmp.path())
+        .status()
+        .unwrap();
+
+    // Make a change
+    std::fs::write(tmp.path().join("detached.txt"), "detached work\n").unwrap();
+
+    // Commit should succeed but warn about detached HEAD
+    let output = agentjj()
+        .args(["commit", "-m", "feat: detached head commit"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("HEAD is detached"),
+        "Should warn about detached HEAD skipping git branch sync, got: {}",
+        stderr
+    );
+}

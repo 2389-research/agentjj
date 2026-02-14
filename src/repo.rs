@@ -1841,7 +1841,9 @@ impl Repo {
             })?;
 
         // Export jj refs to git (syncs bookmarks → git branches)
-        let _ = jj_lib::git::export_refs(tx.repo_mut());
+        if let Err(e) = jj_lib::git::export_refs(tx.repo_mut()) {
+            eprintln!("warning: failed to export jj refs to git: {}", e);
+        }
 
         // Commit the transaction
         let new_repo = tx.commit("commit").map_err(|e| Error::Repository {
@@ -1860,27 +1862,51 @@ impl Repo {
         let commit_hex = committed.id().hex();
         if let Some(branch) = get_current_git_branch(&self.root) {
             // Move the git branch ref to the committed change
-            let update_ref = Command::new("git")
+            match Command::new("git")
                 .current_dir(&self.root)
                 .args(["update-ref", &format!("refs/heads/{}", branch), &commit_hex])
-                .output();
-            if let Err(e) = update_ref {
-                eprintln!(
-                    "warning: failed to update git ref for branch '{}': {}",
-                    branch, e
-                );
+                .output()
+            {
+                Ok(output) if !output.status.success() => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!(
+                        "warning: git update-ref failed for branch '{}': {}",
+                        branch,
+                        stderr.trim()
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "warning: failed to run git update-ref for branch '{}': {}",
+                        branch, e
+                    );
+                }
+                _ => {}
             }
             // Re-attach HEAD to the branch (jj colocated mode detaches HEAD)
-            let symbolic_ref = Command::new("git")
+            match Command::new("git")
                 .current_dir(&self.root)
                 .args(["symbolic-ref", "HEAD", &format!("refs/heads/{}", branch)])
-                .output();
-            if let Err(e) = symbolic_ref {
-                eprintln!(
-                    "warning: failed to set git HEAD to branch '{}': {}",
-                    branch, e
-                );
+                .output()
+            {
+                Ok(output) if !output.status.success() => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!(
+                        "warning: git symbolic-ref failed for branch '{}': {}",
+                        branch,
+                        stderr.trim()
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "warning: failed to run git symbolic-ref for branch '{}': {}",
+                        branch, e
+                    );
+                }
+                _ => {}
             }
+        } else {
+            eprintln!("warning: HEAD is detached; skipping git branch sync");
         }
 
         // Save TypedChange metadata
@@ -1976,11 +2002,10 @@ pub fn days_to_ymd(days: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
-/// Get the current git branch name. In jj colocated mode, HEAD may be
-/// detached, so we fall back to checking the configured default branch
-/// and then common branch names.
+/// Get the current git branch name from HEAD's symbolic ref. Returns None
+/// when HEAD is detached (common in jj colocated mode) to avoid guessing
+/// which branch to update — guessing wrong can move an unrelated branch.
 fn get_current_git_branch(root: &Path) -> Option<String> {
-    // Try symbolic ref first (normal git state)
     let output = Command::new("git")
         .current_dir(root)
         .args(["symbolic-ref", "--short", "HEAD"])
@@ -1994,44 +2019,7 @@ fn get_current_git_branch(root: &Path) -> Option<String> {
         }
     }
 
-    // Fallback for detached HEAD: check git config for default branch name
-    let config_output = Command::new("git")
-        .current_dir(root)
-        .args(["config", "--get", "init.defaultBranch"])
-        .output()
-        .ok();
-    if let Some(co) = config_output {
-        if co.status.success() {
-            let configured = String::from_utf8_lossy(&co.stdout).trim().to_string();
-            if !configured.is_empty() {
-                let verify = Command::new("git")
-                    .current_dir(root)
-                    .args([
-                        "rev-parse",
-                        "--verify",
-                        &format!("refs/heads/{}", configured),
-                    ])
-                    .output()
-                    .ok();
-                if verify.map(|v| v.status.success()).unwrap_or(false) {
-                    return Some(configured);
-                }
-            }
-        }
-    }
-
-    // Last resort: check common default branch names
-    for name in &["main", "master"] {
-        let output = Command::new("git")
-            .current_dir(root)
-            .args(["rev-parse", "--verify", &format!("refs/heads/{}", name)])
-            .output()
-            .ok()?;
-        if output.status.success() {
-            return Some(name.to_string());
-        }
-    }
-
+    // HEAD is detached — do not guess. Caller should handle None gracefully.
     None
 }
 
