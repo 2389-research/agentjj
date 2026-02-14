@@ -191,9 +191,13 @@ impl Repo {
 
     /// Discover and open a repository from the current directory or ancestors.
     /// If a git repo is found without jj, automatically colocates jj with it.
+    /// Resolves symlinks to ensure consistent paths (jj's working copy tracking
+    /// uses filesystem paths, so symlinked working directories fail silently).
     pub fn discover() -> Result<Self> {
         let cwd = std::env::current_dir()?;
-        let mut current = cwd.as_path();
+        // Resolve symlinks so jj's working copy tracking uses the canonical path
+        let canonical_cwd = std::fs::canonicalize(&cwd).unwrap_or(cwd);
+        let mut current = canonical_cwd.as_path();
 
         // Track if we find a git repo without jj
         let mut found_git_without_jj: Option<PathBuf> = None;
@@ -238,8 +242,34 @@ impl Repo {
                 message: format!("Failed to initialize jj with git repo: {}", e),
             })?;
 
+        // Ensure .jj is in .gitignore so it doesn't pollute git status
+        Self::ensure_jj_gitignored(git_repo_path);
+
         // Now open the newly created repo
         Self::open(git_repo_path)
+    }
+
+    /// Add .jj/ to .gitignore if not already present.
+    fn ensure_jj_gitignored(repo_path: &Path) {
+        let gitignore_path = repo_path.join(".gitignore");
+        let content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+
+        // Check if .jj is already ignored (various forms)
+        let already_ignored = content.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed == ".jj" || trimmed == ".jj/" || trimmed == "/.jj" || trimmed == "/.jj/"
+        });
+
+        if !already_ignored {
+            let new_content = if content.is_empty() || content.ends_with('\n') {
+                format!("{}.jj/\n", content)
+            } else {
+                format!("{}\n.jj/\n", content)
+            };
+            if let Err(e) = std::fs::write(&gitignore_path, new_content) {
+                eprintln!("warning: failed to add .jj to .gitignore: {}", e);
+            }
+        }
     }
 
     /// Get the repository root path
@@ -1297,6 +1327,81 @@ impl Repo {
         Ok(())
     }
 
+    /// Resolve a jj revision spec to its commit ID hex and parent commit ID hex.
+    /// Supports @, @-, and jj change ID hex prefixes.
+    /// In colocated mode, jj commit IDs are git commit IDs.
+    pub fn resolve_revision(&mut self, rev: &str) -> Result<(Option<String>, String)> {
+        let repo = self.load_repo_at_head()?;
+        let workspace = self.workspace.as_ref().unwrap();
+
+        let commit_id = match rev {
+            "@" => repo
+                .view()
+                .get_wc_commit_id(workspace.workspace_name())
+                .cloned()
+                .ok_or_else(|| Error::Repository {
+                    message: "no working copy commit found".into(),
+                })?,
+            "@-" => {
+                let wc_id = repo
+                    .view()
+                    .get_wc_commit_id(workspace.workspace_name())
+                    .cloned()
+                    .ok_or_else(|| Error::Repository {
+                        message: "no working copy commit found".into(),
+                    })?;
+                let wc_commit = repo
+                    .store()
+                    .get_commit(&wc_id)
+                    .map_err(|e| Error::Repository {
+                        message: format!("failed to get commit: {}", e),
+                    })?;
+                wc_commit
+                    .parent_ids()
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| Error::Repository {
+                        message: "working copy has no parent".into(),
+                    })?
+            }
+            other => {
+                let change_id_obj =
+                    jj_lib::backend::ChangeId::try_from_hex(other).ok_or_else(|| {
+                        Error::Repository {
+                            message: format!("invalid revision: {}", other),
+                        }
+                    })?;
+                let targets = repo
+                    .resolve_change_id(&change_id_obj)
+                    .map_err(|e| Error::Repository {
+                        message: format!("failed to resolve change ID: {}", e),
+                    })?
+                    .ok_or_else(|| Error::Repository {
+                        message: format!("change '{}' not found", other),
+                    })?;
+                let (_, cid) =
+                    targets
+                        .visible_with_offsets()
+                        .next()
+                        .ok_or_else(|| Error::Repository {
+                            message: format!("no visible commits for '{}'", other),
+                        })?;
+                cid.clone()
+            }
+        };
+
+        let commit = repo
+            .store()
+            .get_commit(&commit_id)
+            .map_err(|e| Error::Repository {
+                message: format!("failed to get commit: {}", e),
+            })?;
+
+        let parent_hex = commit.parent_ids().first().map(|pid| pid.hex());
+
+        Ok((parent_hex, commit_id.hex()))
+    }
+
     /// Get structured log entries from the repository.
     pub fn log_entries(&mut self, limit: usize, all: bool) -> Result<Vec<LogEntry>> {
         let repo = self.load_repo_at_head()?;
@@ -1730,35 +1835,32 @@ impl Repo {
         })
     }
 
-    /// Get the raw ASCII graph output.
-    /// Note: This still shells out to jj for complex graph rendering.
-    #[allow(clippy::needless_borrows_for_generic_args)]
+    /// Get the raw ASCII graph output using git (no jj CLI dependency).
     pub fn log_ascii(&mut self, limit: usize, all: bool) -> Result<String> {
-        // For ASCII graph rendering, we still use jj CLI as jj-lib doesn't have
-        // a built-in ASCII graph renderer and implementing one is complex.
-        // This is an acceptable compromise as it's only used for display purposes.
         let limit_str = limit.to_string();
-        let mut args = vec!["jj", "log"];
+        let mut args = vec!["log", "--graph", "--oneline", "--decorate"];
 
         if !all {
-            args.push("--limit");
+            args.push("-n");
             args.push(&limit_str);
         } else {
-            args.push("--revisions");
-            args.push("all()");
+            args.push("--all");
         }
 
-        let output = Command::new(&args[0])
-            .args(&args[1..])
+        let output = Command::new("git")
+            .args(&args)
             .current_dir(&self.root)
             .output()
             .map_err(|e| Error::Repository {
-                message: format!("failed to run jj log: {}", e),
+                message: format!("failed to run git log: {}", e),
             })?;
 
         if !output.status.success() {
             return Err(Error::Repository {
-                message: format!("jj log failed: {}", String::from_utf8_lossy(&output.stderr)),
+                message: format!(
+                    "git log failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
             });
         }
 

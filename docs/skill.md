@@ -86,10 +86,21 @@ agentjj undo --to before-refactor           # Restore to named checkpoint
 agentjj undo --dry-run                      # Preview what would be undone
 ```
 
+### Committing Changes
+
+```bash
+agentjj commit -m "feat: add auth endpoint"                     # Basic commit
+agentjj commit -m "fix: null check" --type behavioral           # Typed commit
+agentjj commit -m "refactor: extract parser" --type refactor    # Refactor type
+```
+
+Types: `behavioral`, `refactor`, `schema`, `docs`, `deps`, `config`, `test`
+
 ### Changes & Diffs
 
 ```bash
 agentjj diff                                # Show current diff
+agentjj diff --against @                    # Working copy changes
 agentjj diff --explain                      # With semantic summary
 agentjj diff --against @--                  # Compare to 2 changes ago
 ```
@@ -151,23 +162,23 @@ Exit codes: 0 = success, 1 = error
 
 ```bash
 # 1. Orient yourself
-agentjj --json orient
+agentjj orient
 
-# 2. Understand what you're changing
-agentjj context src/auth.rs::login
-agentjj affected src/auth.rs::login
-
-# 3. Create a checkpoint
+# 2. Create a checkpoint before making changes
 agentjj checkpoint before-auth-refactor
 
-# 4. Make changes, then validate
-agentjj validate
+# 3. Make code changes, then review
+agentjj status                              # See what changed
+agentjj diff                                # Review the diff
 
-# 5. Set typed change metadata
-agentjj change set -i "Refactor login for OAuth" -t refactor
+# 4. Commit
+agentjj commit -m "feat: add OAuth login support"
 
-# 6. Push with PR
-agentjj push --pr --title "OAuth login support"
+# 5. Create another checkpoint, continue working
+agentjj checkpoint after-auth
+
+# 6. Push when ready
+agentjj push --branch main
 ```
 
 ## Command Reference
@@ -186,6 +197,7 @@ agentjj push --pr --title "OAuth login support"
 | `bulk symbols <pattern>` | Query symbols across files |
 | `bulk context <symbols...>` | Get multiple contexts |
 | `files [--pattern] [--symbols]` | List files |
+| `commit -m "msg"` | Commit changes (most-used command) |
 | `checkpoint <name>` | Create restore point |
 | `undo [--steps N]` | Revert operations |
 | `diff [--explain]` | Show changes |

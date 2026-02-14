@@ -1318,40 +1318,22 @@ fn cmd_orient(json: bool) -> Result<()> {
         }
     }
 
-    // Get recent changes
-    let recent_output = std::process::Command::new("jj")
-        .current_dir(repo.root())
-        .args([
-            "log",
-            "--limit",
-            "5",
-            "-T",
-            r#"change_id ++ " " ++ description.first_line() ++ "\n""#,
-        ])
-        .output();
-
-    let recent_changes: Vec<serde_json::Value> = recent_output
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                Some(
-                    String::from_utf8_lossy(&o.stdout)
-                        .lines()
-                        .filter(|l| !l.trim().is_empty())
-                        .map(|line| {
-                            let parts: Vec<&str> = line.splitn(2, ' ').collect();
-                            serde_json::json!({
-                                "change_id": parts.first().unwrap_or(&""),
-                                "description": parts.get(1).unwrap_or(&"(no description)"),
-                            })
-                        })
-                        .collect(),
-                )
-            } else {
-                None
-            }
+    // Get recent changes via jj-lib (no jj CLI dependency)
+    let recent_changes: Vec<serde_json::Value> = repo
+        .log_entries(5, false)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| {
+            serde_json::json!({
+                "change_id": entry.change_id,
+                "description": if entry.description.is_empty() {
+                    "(no description)".to_string()
+                } else {
+                    entry.description
+                },
+            })
         })
-        .unwrap_or_default();
+        .collect();
 
     // Get typed changes
     let typed_changes = agentjj::change::ChangeIndex::load_from_repo(repo.root())
@@ -1924,14 +1906,36 @@ fn format_size(bytes: u64) -> String {
 
 /// Show semantic diff
 fn cmd_diff(against: Option<String>, explain: bool, json: bool) -> Result<()> {
-    let repo = Repo::discover()?;
+    let mut repo = Repo::discover()?;
     let target = against.unwrap_or_else(|| "@-".to_string());
 
-    // Get the diff
-    let diff_output = std::process::Command::new("jj")
-        .current_dir(repo.root())
-        .args(["diff", "-r", &target])
-        .output()?;
+    // agentjj is colocated with git; use git for diff rendering since jj CLI
+    // is not required to be installed.
+    let diff_output = if target == "@" {
+        // Working copy changes: compare git HEAD to working tree
+        std::process::Command::new("git")
+            .current_dir(repo.root())
+            .args(["diff", "HEAD"])
+            .output()?
+    } else {
+        // Resolve the jj revision to git-compatible commit IDs.
+        // In colocated mode, jj commit IDs are git commit IDs.
+        let (parent_hex, commit_hex) = repo.resolve_revision(&target)?;
+
+        match parent_hex {
+            Some(parent) => std::process::Command::new("git")
+                .current_dir(repo.root())
+                .args(["diff", &parent, &commit_hex])
+                .output()?,
+            None => {
+                // Root commit: show entire commit as additions
+                std::process::Command::new("git")
+                    .current_dir(repo.root())
+                    .args(["show", "--format=", &commit_hex])
+                    .output()?
+            }
+        }
+    };
 
     if !diff_output.status.success() {
         let stderr = String::from_utf8_lossy(&diff_output.stderr);
