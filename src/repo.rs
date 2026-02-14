@@ -10,8 +10,10 @@ use jj_lib::backend::CommitId;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::gitignore::GitIgnoreFile;
 use jj_lib::matchers::{EverythingMatcher, NothingMatcher};
+use jj_lib::merged_tree::MergedTreeBuilder;
 use jj_lib::object_id::ObjectId;
 use jj_lib::repo::{ReadonlyRepo, Repo as JjRepo, StoreFactories};
+use jj_lib::repo_path::RepoPath;
 use jj_lib::settings::UserSettings;
 use jj_lib::working_copy::SnapshotOptions;
 use jj_lib::workspace::{default_working_copy_factories, WorkingCopyFactories, Workspace};
@@ -82,6 +84,9 @@ pub struct CommitOptions {
     pub change_type: ChangeType,
     pub category: Option<ChangeCategory>,
     pub breaking: bool,
+    /// When set, only changes to these paths are included in the commit.
+    /// Unlisted changes remain in the working copy.
+    pub paths: Option<Vec<String>>,
 }
 
 /// Result of a successful commit via jj-lib
@@ -1720,6 +1725,76 @@ impl Repo {
             });
         }
 
+        // When --paths is specified, filter to only the requested paths and
+        // build a selective tree containing just those changes.
+        let commit_tree = if let Some(ref paths) = opts.paths {
+            // Validate each requested path: must exist in the diff (changed)
+            // or at least exist in new_tree (unchanged => skip silently).
+            // If a path doesn't exist at all in the snapshot, error.
+            for p in paths {
+                if !files_changed.contains(p) {
+                    let repo_path =
+                        RepoPath::from_internal_string(p).map_err(|e| Error::Repository {
+                            message: format!("invalid path '{}': {}", p, e),
+                        })?;
+                    let value = new_tree
+                        .path_value(repo_path)
+                        .map_err(|e| Error::Repository {
+                            message: format!("failed to check path '{}': {}", p, e),
+                        })?;
+                    if value.is_absent() {
+                        locked_ws
+                            .finish(repo.op_id().clone())
+                            .map_err(|e| Error::Repository {
+                                message: format!("failed to finish working copy: {}", e),
+                            })?;
+                        return Err(Error::Repository {
+                            message: format!(
+                                "path '{}' does not exist in the working copy snapshot",
+                                p
+                            ),
+                        });
+                    }
+                    // Path exists but is unchanged — skip silently (no-op)
+                }
+            }
+
+            // Filter files_changed to only include paths in --paths
+            files_changed.retain(|f| paths.iter().any(|p| f == p));
+
+            if files_changed.is_empty() {
+                locked_ws
+                    .finish(repo.op_id().clone())
+                    .map_err(|e| Error::Repository {
+                        message: format!("failed to finish working copy: {}", e),
+                    })?;
+                return Err(Error::Repository {
+                    message: "no changes in specified paths".into(),
+                });
+            }
+
+            // Build a selective tree: start from parent_tree, overlay only the
+            // requested paths from new_tree.
+            let mut tree_builder = MergedTreeBuilder::new(parent_tree.clone());
+            for path_str in &files_changed {
+                let repo_path =
+                    RepoPath::from_internal_string(path_str).map_err(|e| Error::Repository {
+                        message: format!("invalid path '{}': {}", path_str, e),
+                    })?;
+                let new_value = new_tree
+                    .path_value(repo_path)
+                    .map_err(|e| Error::Repository {
+                        message: format!("failed to read path '{}' from snapshot: {}", path_str, e),
+                    })?;
+                tree_builder.set_or_remove(repo_path.to_owned(), new_value);
+            }
+            tree_builder.write_tree().map_err(|e| Error::Repository {
+                message: format!("failed to build selective tree: {}", e),
+            })?
+        } else {
+            new_tree
+        };
+
         // Run invariants between snapshot and commit (safe: no commit yet)
         let invariants = if opts.run_invariants && self.has_manifest() {
             match self.run_invariants(InvariantTrigger::PreCommit) {
@@ -1746,11 +1821,11 @@ impl Repo {
         // Start jj-lib transaction
         let mut tx = repo.start_transaction();
 
-        // Rewrite WC commit with the snapshot tree and commit message
+        // Rewrite WC commit with the (possibly selective) tree and commit message
         let committed = tx
             .repo_mut()
             .rewrite_commit(&wc_commit)
-            .set_tree(new_tree)
+            .set_tree(commit_tree)
             .set_description(&opts.message)
             .write()
             .map_err(|e| Error::Repository {

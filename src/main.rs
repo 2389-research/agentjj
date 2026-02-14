@@ -155,6 +155,10 @@ enum Commands {
         /// Mark as breaking change
         #[arg(long)]
         breaking: bool,
+
+        /// Only include changes to these paths in the commit
+        #[arg(long, num_args = 1..)]
+        paths: Option<Vec<String>>,
     },
 
     /// Create or update a git tag
@@ -436,6 +440,7 @@ fn run_command(cli: Cli) -> Result<()> {
             category,
             no_invariants,
             breaking,
+            paths,
         } => cmd_commit(
             message,
             no_new,
@@ -443,6 +448,7 @@ fn run_command(cli: Cli) -> Result<()> {
             category,
             no_invariants,
             breaking,
+            paths,
             cli.json,
         ),
         Commands::Tag {
@@ -1025,6 +1031,7 @@ fn cmd_context(path: String, json: bool) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_commit(
     message: String,
     no_new: bool,
@@ -1032,6 +1039,7 @@ fn cmd_commit(
     category_str: Option<String>,
     no_invariants: bool,
     breaking: bool,
+    paths: Option<Vec<String>>,
     json: bool,
 ) -> Result<()> {
     let mut repo = Repo::discover()?;
@@ -1049,6 +1057,7 @@ fn cmd_commit(
         change_type,
         category,
         breaking,
+        paths,
     };
 
     let result = repo.commit_working_copy(opts)?;

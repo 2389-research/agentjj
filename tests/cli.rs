@@ -853,3 +853,273 @@ fn graph_dot_json_includes_rich_fields() {
         );
     }
 }
+
+// =============================================================================
+// Commit --paths tests (selective commit)
+// =============================================================================
+
+#[test]
+fn commit_paths_includes_only_specified_files() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create two files
+    std::fs::write(tmp.path().join("included.txt"), "I should be committed\n").unwrap();
+    std::fs::write(
+        tmp.path().join("excluded.txt"),
+        "I should NOT be committed\n",
+    )
+    .unwrap();
+
+    // Commit only included.txt using --paths
+    let output = agentjj()
+        .args([
+            "--json",
+            "commit",
+            "-m",
+            "feat: add included file",
+            "--no-invariants",
+            "--paths",
+            "included.txt",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Commit output should be valid JSON");
+
+    assert_eq!(json["committed"], true);
+    let files = json["files_changed"].as_array().unwrap();
+
+    // Only the specified path should appear in files_changed
+    let file_names: Vec<&str> = files.iter().map(|f| f.as_str().unwrap()).collect();
+    assert!(
+        file_names.contains(&"included.txt"),
+        "files_changed should contain included.txt, got {:?}",
+        file_names
+    );
+    assert!(
+        !file_names.contains(&"excluded.txt"),
+        "files_changed should NOT contain excluded.txt, got {:?}",
+        file_names
+    );
+}
+
+#[test]
+fn commit_paths_leaves_other_changes_in_working_copy() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create two files
+    std::fs::write(tmp.path().join("committed.txt"), "committed content\n").unwrap();
+    std::fs::write(tmp.path().join("remaining.txt"), "remaining content\n").unwrap();
+
+    // Commit only committed.txt
+    agentjj()
+        .args([
+            "commit",
+            "-m",
+            "feat: add committed file",
+            "--no-invariants",
+            "--paths",
+            "committed.txt",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // The remaining file should still exist on disk (not lost)
+    assert!(
+        tmp.path().join("remaining.txt").exists(),
+        "remaining.txt should still exist on filesystem after selective commit"
+    );
+    let content = std::fs::read_to_string(tmp.path().join("remaining.txt")).unwrap();
+    assert_eq!(
+        content, "remaining content\n",
+        "remaining.txt content should be unchanged"
+    );
+
+    // A subsequent commit (which snapshots the filesystem) should pick up
+    // the remaining file, proving it was left in the working copy.
+    let output = agentjj()
+        .args([
+            "--json",
+            "commit",
+            "-m",
+            "feat: add remaining file",
+            "--no-invariants",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Commit output should be valid JSON");
+
+    let files = json["files_changed"].as_array().unwrap();
+    let file_names: Vec<&str> = files.iter().map(|f| f.as_str().unwrap()).collect();
+    assert!(
+        file_names.contains(&"remaining.txt"),
+        "remaining.txt should be picked up by the next commit, got {:?}",
+        file_names
+    );
+}
+
+#[test]
+fn commit_paths_nonexistent_path_errors() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create a file so there's something to commit
+    std::fs::write(tmp.path().join("real.txt"), "real content\n").unwrap();
+
+    // Try to commit a path that doesn't exist
+    agentjj()
+        .args([
+            "commit",
+            "-m",
+            "should fail",
+            "--no-invariants",
+            "--paths",
+            "nonexistent.txt",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("does not exist"));
+}
+
+#[test]
+fn commit_paths_unchanged_path_no_changes_error() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create .agent/.gitignore so TypedChange files don't pollute snapshots
+    std::fs::create_dir_all(tmp.path().join(".agent")).unwrap();
+    std::fs::write(
+        tmp.path().join(".agent/.gitignore"),
+        "changes/\ncheckpoints/\n",
+    )
+    .unwrap();
+
+    // Create a file and commit it first
+    std::fs::write(tmp.path().join("stable.txt"), "stable content\n").unwrap();
+    agentjj()
+        .args([
+            "commit",
+            "-m",
+            "initial: add stable file",
+            "--no-invariants",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // Now create a new file but try to commit only the unchanged stable.txt
+    std::fs::write(tmp.path().join("new.txt"), "new content\n").unwrap();
+
+    agentjj()
+        .args([
+            "commit",
+            "-m",
+            "should fail",
+            "--no-invariants",
+            "--paths",
+            "stable.txt",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no changes in specified paths"));
+}
+
+#[test]
+fn commit_paths_multiple_paths() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create three files
+    std::fs::write(tmp.path().join("a.txt"), "file a\n").unwrap();
+    std::fs::write(tmp.path().join("b.txt"), "file b\n").unwrap();
+    std::fs::write(tmp.path().join("c.txt"), "file c\n").unwrap();
+
+    // Commit only a.txt and b.txt
+    let output = agentjj()
+        .args([
+            "--json",
+            "commit",
+            "-m",
+            "feat: add a and b",
+            "--no-invariants",
+            "--paths",
+            "a.txt",
+            "b.txt",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Commit output should be valid JSON");
+
+    let files = json["files_changed"].as_array().unwrap();
+    let file_names: Vec<&str> = files.iter().map(|f| f.as_str().unwrap()).collect();
+
+    assert!(file_names.contains(&"a.txt"), "Should include a.txt");
+    assert!(file_names.contains(&"b.txt"), "Should include b.txt");
+    assert!(!file_names.contains(&"c.txt"), "Should NOT include c.txt");
+}
+
+#[test]
+fn commit_without_paths_unchanged_behavior() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create two files and commit without --paths (should include both)
+    std::fs::write(tmp.path().join("one.txt"), "file one\n").unwrap();
+    std::fs::write(tmp.path().join("two.txt"), "file two\n").unwrap();
+
+    let output = agentjj()
+        .args([
+            "--json",
+            "commit",
+            "-m",
+            "feat: add both files",
+            "--no-invariants",
+        ])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Commit output should be valid JSON");
+
+    let files = json["files_changed"].as_array().unwrap();
+    let file_names: Vec<&str> = files.iter().map(|f| f.as_str().unwrap()).collect();
+
+    assert!(
+        file_names.contains(&"one.txt"),
+        "Should include one.txt when --paths not used"
+    );
+    assert!(
+        file_names.contains(&"two.txt"),
+        "Should include two.txt when --paths not used"
+    );
+}
