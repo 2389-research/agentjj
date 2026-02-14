@@ -1204,3 +1204,100 @@ fn commit_on_detached_head_warns_about_git_sync() {
         stderr
     );
 }
+
+// =============================================================================
+// Test: first agentjj commit inherits git history (not disconnected)
+// =============================================================================
+
+#[test]
+fn first_commit_has_git_head_as_ancestor() {
+    let tmp = TempDir::new().unwrap();
+
+    // Initialize a git repository with a commit
+    Command::new("git")
+        .args(["init"])
+        .current_dir(tmp.path())
+        .status()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(tmp.path())
+        .status()
+        .unwrap();
+
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(tmp.path())
+        .status()
+        .unwrap();
+
+    std::fs::write(tmp.path().join("README.md"), "# Test\n").unwrap();
+
+    Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(tmp.path())
+        .status()
+        .unwrap();
+
+    Command::new("git")
+        .args(["commit", "-m", "initial git commit"])
+        .current_dir(tmp.path())
+        .status()
+        .unwrap();
+
+    // Get git HEAD hash before agentjj touches anything
+    let git_head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    let git_head_hex = String::from_utf8_lossy(&git_head.stdout).trim().to_string();
+    assert!(!git_head_hex.is_empty(), "git HEAD should exist");
+
+    // Make a change and commit via agentjj (triggers auto-colocate init)
+    std::fs::write(tmp.path().join("new.txt"), "new content\n").unwrap();
+
+    agentjj()
+        .args(["commit", "-m", "feat: first agentjj commit"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // Verify: git log should show BOTH commits (agentjj's and the original)
+    // If init_colocated_git doesn't import refs, the agentjj commit would be
+    // disconnected with no parent, and "initial git commit" would not appear
+    // in the log starting from HEAD.
+    let log_output = Command::new("git")
+        .args(["log", "--oneline", "--all"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    let log_text = String::from_utf8_lossy(&log_output.stdout);
+
+    assert!(
+        log_text.contains("initial git commit"),
+        "git log should contain the original git commit, but got:\n{}",
+        log_text
+    );
+    assert!(
+        log_text.contains("first agentjj commit"),
+        "git log should contain the agentjj commit, but got:\n{}",
+        log_text
+    );
+
+    // Verify the agentjj commit is an ancestor of git HEAD (connected history)
+    let ancestor_check = Command::new("git")
+        .args(["log", "--oneline", "HEAD"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    let ancestor_text = String::from_utf8_lossy(&ancestor_check.stdout);
+
+    // Both commits should be reachable from HEAD (connected lineage)
+    assert!(
+        ancestor_text.contains("initial git commit"),
+        "Original git commit should be reachable from HEAD (connected history), got:\n{}",
+        ancestor_text
+    );
+}

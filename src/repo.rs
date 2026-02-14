@@ -223,10 +223,58 @@ impl Repo {
 
         // Use init_external_git for existing git repos - pass the .git path
         let git_dir = git_repo_path.join(".git");
-        let (_workspace, _repo) = Workspace::init_external_git(&settings, git_repo_path, &git_dir)
+        let (_workspace, repo) = Workspace::init_external_git(&settings, git_repo_path, &git_dir)
             .map_err(|e| Error::Repository {
-                message: format!("Failed to initialize jj with git repo: {}", e),
-            })?;
+            message: format!("Failed to initialize jj with git repo: {}", e),
+        })?;
+
+        // Import git refs so jj sees the existing git history. Without this,
+        // jj's working copy commit is parented to jj's empty root instead of
+        // git HEAD, causing the first agentjj commit to create a disconnected
+        // orphan history.
+        let import_options = jj_lib::git::GitImportOptions {
+            auto_local_bookmark: false,
+            abandon_unreachable_commits: false,
+            remote_auto_track_bookmarks: Default::default(),
+        };
+        let mut tx = repo.start_transaction();
+        if let Err(e) = jj_lib::git::import_refs(tx.repo_mut(), &import_options) {
+            eprintln!("warning: failed to import git refs: {}", e);
+        }
+
+        // Check out git HEAD so the working copy commit inherits the right parent
+        let git_head = Command::new("git")
+            .current_dir(git_repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            });
+
+        if let Some(head_hex) = git_head {
+            if let Some(head_commit_id) = jj_lib::backend::CommitId::try_from_hex(&head_hex) {
+                if let Ok(head_commit) = tx.repo().store().get_commit(&head_commit_id) {
+                    // Create a new working copy commit on top of git HEAD
+                    if let Ok(new_wc) = tx
+                        .repo_mut()
+                        .new_commit(vec![head_commit.id().clone()], head_commit.tree())
+                        .write()
+                    {
+                        let ws_name = _workspace.workspace_name().to_owned();
+                        let _ = tx.repo_mut().set_wc_commit(ws_name, new_wc.id().clone());
+                    }
+                }
+            }
+        }
+
+        if let Err(e) = tx.commit("import git refs and set working copy") {
+            eprintln!("warning: failed to commit git import transaction: {}", e);
+        }
 
         // Ensure .jj is in .gitignore so it doesn't pollute git status
         Self::ensure_jj_gitignored(git_repo_path);
