@@ -707,3 +707,149 @@ always_fail = { cmd = "false", on = ["pre-commit"] }
         "Failed invariant should prevent commit from appearing in git log"
     );
 }
+
+// =============================================================================
+// Graph command tests (richer output with timestamp, author, full_commit_id)
+// =============================================================================
+
+#[test]
+fn graph_ascii_json_includes_rich_fields() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    // Create a file and commit so there's a node with author/timestamp data
+    std::fs::write(tmp.path().join("feature.txt"), "new feature\n").unwrap();
+
+    agentjj()
+        .args(["commit", "-m", "feat: add feature file"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    // Now run graph ascii in JSON mode
+    let output = agentjj()
+        .args(["--json", "graph", "--format", "ascii"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Graph ASCII JSON should be valid");
+
+    assert_eq!(json["format"], "ascii", "Should report format as ascii");
+    assert!(json["nodes"].is_array(), "Should have nodes array");
+
+    let nodes = json["nodes"].as_array().unwrap();
+    assert!(!nodes.is_empty(), "Should have at least one node");
+
+    // Check that every node has the new rich fields
+    for node in nodes {
+        assert!(node["id"].is_string(), "Node should have id");
+        assert!(node["parents"].is_array(), "Node should have parents");
+        assert!(
+            node["full_commit_id"].is_string(),
+            "Node should have full_commit_id"
+        );
+        // full_commit_id should be longer than the truncated commit_id
+        let full_id = node["full_commit_id"].as_str().unwrap();
+        assert!(
+            full_id.len() > 8,
+            "full_commit_id should be the full hex hash, got len={}",
+            full_id.len()
+        );
+    }
+}
+
+#[test]
+fn graph_mermaid_json_includes_rich_fields() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    std::fs::write(tmp.path().join("mermaid.txt"), "mermaid test\n").unwrap();
+
+    agentjj()
+        .args(["commit", "-m", "feat: mermaid test"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let output = agentjj()
+        .args(["--json", "graph", "--format", "mermaid"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Graph mermaid JSON should be valid");
+
+    assert_eq!(json["format"], "mermaid");
+    let nodes = json["nodes"].as_array().unwrap();
+    assert!(!nodes.is_empty());
+
+    for node in nodes {
+        assert!(
+            node["full_commit_id"].is_string(),
+            "Should have full_commit_id"
+        );
+        // timestamp and author may be null for root/empty commits, but the field must exist
+        assert!(
+            node.get("timestamp").is_some(),
+            "Node should have timestamp field"
+        );
+        assert!(
+            node.get("author").is_some(),
+            "Node should have author field"
+        );
+    }
+}
+
+#[test]
+fn graph_dot_json_includes_rich_fields() {
+    let Some(tmp) = setup_temp_repo_for_commit() else {
+        eprintln!("Skipping test: could not set up temp repo");
+        return;
+    };
+
+    std::fs::write(tmp.path().join("dot.txt"), "dot test\n").unwrap();
+
+    agentjj()
+        .args(["commit", "-m", "feat: dot test"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let output = agentjj()
+        .args(["--json", "graph", "--format", "dot"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Graph DOT JSON should be valid");
+
+    assert_eq!(json["format"], "dot");
+    let nodes = json["nodes"].as_array().unwrap();
+    assert!(!nodes.is_empty());
+
+    for node in nodes {
+        assert!(
+            node["full_commit_id"].is_string(),
+            "Should have full_commit_id"
+        );
+        assert!(
+            node.get("timestamp").is_some(),
+            "Node should have timestamp field"
+        );
+        assert!(
+            node.get("author").is_some(),
+            "Node should have author field"
+        );
+    }
+}

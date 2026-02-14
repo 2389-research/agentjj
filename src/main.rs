@@ -2490,6 +2490,9 @@ struct GraphNode {
     id: String,
     description: String,
     parents: Vec<String>,
+    timestamp: Option<String>,
+    author: Option<String>,
+    full_commit_id: String,
 }
 
 /// Get structured graph nodes using Repo.log_entries()
@@ -2502,19 +2505,22 @@ fn get_graph_nodes(repo: &mut Repo, limit: usize, all: bool) -> Result<Vec<Graph
             id: entry.change_id,
             description: entry.description,
             parents: entry.parent_change_ids,
+            timestamp: entry.timestamp,
+            author: entry.author,
+            full_commit_id: entry.full_commit_id,
         })
         .collect();
 
     Ok(nodes)
 }
 
-/// ASCII format: pass through jj log output
+/// ASCII format: structured log output with optional timestamps
 fn cmd_graph_ascii(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result<()> {
-    let ascii_output = repo.log_ascii(limit, all)?;
+    let nodes = get_graph_nodes(repo, limit, all)?;
 
     if json {
-        // For JSON mode, also get structured nodes
-        let nodes = get_graph_nodes(repo, limit, all).unwrap_or_default();
+        // Also get the raw ASCII diagram for backwards compatibility
+        let ascii_output = repo.log_ascii(limit, all).unwrap_or_default();
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
@@ -2524,11 +2530,27 @@ fn cmd_graph_ascii(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Resu
                     "id": n.id,
                     "description": n.description,
                     "parents": n.parents,
+                    "timestamp": n.timestamp,
+                    "author": n.author,
+                    "full_commit_id": n.full_commit_id,
                 })).collect::<Vec<_>>(),
             }))?
         );
     } else {
-        print!("{}", ascii_output);
+        // Render ASCII graph with timestamps inline
+        for node in &nodes {
+            let ts_part = node
+                .timestamp
+                .as_deref()
+                .map(|ts| format!(" [{}]", ts))
+                .unwrap_or_default();
+            let desc = if node.description.is_empty() {
+                "(empty)".to_string()
+            } else {
+                node.description.clone()
+            };
+            println!("* {}{} {}", node.id, ts_part, desc);
+        }
     }
 
     Ok(())
@@ -2550,8 +2572,18 @@ fn cmd_graph_mermaid(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Re
             desc.clone()
         };
 
+        // Include timestamp in the node label when available
+        let ts_suffix = node
+            .timestamp
+            .as_deref()
+            .map(|ts| format!("<br/>{}", ts))
+            .unwrap_or_default();
+
         // Node definition with short ID
-        diagram.push_str(&format!("  {}[\"{}\"]\n", node.id, truncated_desc));
+        diagram.push_str(&format!(
+            "  {}[\"{}{}\"]\n",
+            node.id, truncated_desc, ts_suffix
+        ));
 
         // Edges to parents
         for parent_id in &node.parents {
@@ -2569,6 +2601,9 @@ fn cmd_graph_mermaid(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Re
                     "id": n.id,
                     "description": n.description,
                     "parents": n.parents,
+                    "timestamp": n.timestamp,
+                    "author": n.author,
+                    "full_commit_id": n.full_commit_id,
                 })).collect::<Vec<_>>(),
             }))?
         );
@@ -2597,10 +2632,17 @@ fn cmd_graph_dot(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result
             desc.clone()
         };
 
+        // Include timestamp in the label when available
+        let ts_line = node
+            .timestamp
+            .as_deref()
+            .map(|ts| format!("\\n{}", ts))
+            .unwrap_or_default();
+
         // Node definition
         diagram.push_str(&format!(
-            "  \"{}\" [label=\"{}\\n{}\"];\n",
-            node.id, node.id, truncated_desc
+            "  \"{}\" [label=\"{}\\n{}{}\"];\n",
+            node.id, node.id, truncated_desc, ts_line
         ));
 
         // Edges to parents
@@ -2621,6 +2663,9 @@ fn cmd_graph_dot(repo: &mut Repo, limit: usize, all: bool, json: bool) -> Result
                     "id": n.id,
                     "description": n.description,
                     "parents": n.parents,
+                    "timestamp": n.timestamp,
+                    "author": n.author,
+                    "full_commit_id": n.full_commit_id,
                 })).collect::<Vec<_>>(),
             }))?
         );

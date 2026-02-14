@@ -174,7 +174,13 @@ mod checkpoint_and_recovery {
         // Create a checkpoint
         agentjj()
             .current_dir(tmp.path())
-            .args(["checkpoint", "create", "test-recovery", "-d", "Test checkpoint"])
+            .args([
+                "checkpoint",
+                "create",
+                "test-recovery",
+                "-d",
+                "Test checkpoint",
+            ])
             .assert()
             .success()
             .stdout(predicate::str::contains(
@@ -341,7 +347,13 @@ mod checkpoint_and_recovery {
 
         agentjj()
             .current_dir(tmp.path())
-            .args(["checkpoint", "create", "second-cp", "-d", "Second checkpoint"])
+            .args([
+                "checkpoint",
+                "create",
+                "second-cp",
+                "-d",
+                "Second checkpoint",
+            ])
             .assert()
             .success();
 

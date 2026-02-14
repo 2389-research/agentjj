@@ -62,6 +62,9 @@ pub struct LogEntry {
     pub description: String,
     pub parent_change_ids: Vec<String>,
     pub is_working_copy: bool,
+    pub timestamp: Option<String>,
+    pub author: Option<String>,
+    pub full_commit_id: String,
 }
 
 /// Operation info for undo and operation history commands.
@@ -1460,6 +1463,47 @@ impl Repo {
                 let change_hex = commit.change_id().hex();
                 let commit_hex = commit_id.hex();
 
+                // Extract author timestamp as ISO 8601 string
+                let author_sig = commit.author();
+                let timestamp = {
+                    let millis = author_sig.timestamp.timestamp.0;
+                    let secs = millis / 1000;
+                    let tz_offset_mins = author_sig.timestamp.tz_offset;
+                    let tz_offset_secs = (tz_offset_mins as i64) * 60;
+                    // Format as ISO 8601 with timezone offset
+                    let abs_offset = tz_offset_mins.unsigned_abs();
+                    let tz_sign = if tz_offset_mins >= 0 { '+' } else { '-' };
+                    let tz_hours = abs_offset / 60;
+                    let tz_mins = abs_offset % 60;
+                    // Compute date/time from unix timestamp adjusted for timezone
+                    let adjusted_secs = secs + tz_offset_secs;
+                    let days_since_epoch = adjusted_secs.div_euclid(86400);
+                    let time_of_day = adjusted_secs.rem_euclid(86400);
+                    let (year, month, day) = days_to_ymd(days_since_epoch);
+                    let hours = time_of_day / 3600;
+                    let minutes = (time_of_day % 3600) / 60;
+                    let seconds = time_of_day % 60;
+                    Some(format!(
+                        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
+                        year, month, day, hours, minutes, seconds, tz_sign, tz_hours, tz_mins
+                    ))
+                };
+
+                // Extract author name, falling back to email
+                let author = {
+                    let name = &author_sig.name;
+                    let email = &author_sig.email;
+                    if !name.is_empty() {
+                        Some(name.clone())
+                    } else if !email.is_empty() {
+                        Some(email.clone())
+                    } else {
+                        None
+                    }
+                };
+
+                let full_commit_id = commit_hex.clone();
+
                 entries.push(LogEntry {
                     change_id: if change_hex.len() > 8 {
                         change_hex[..8].to_string()
@@ -1479,6 +1523,9 @@ impl Repo {
                         .to_string(),
                     parent_change_ids,
                     is_working_copy,
+                    timestamp,
+                    author,
+                    full_commit_id,
                 });
 
                 count += 1;
@@ -1868,6 +1915,22 @@ impl Repo {
     }
 }
 
+/// Convert days since Unix epoch to (year, month, day) using civil calendar arithmetic.
+fn days_to_ymd(days: i64) -> (i64, u32, u32) {
+    // Algorithm from Howard Hinnant's chrono-compatible date calculations
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32; // day of era [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // year of era [0, 399]
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
+    let mp = (5 * doy + 2) / 153; // month index [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // day [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // month [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
 /// Get the current git branch name. In jj colocated mode, HEAD may be
 /// detached, so we fall back to checking the configured default branch
 /// and then common branch names.
@@ -2049,5 +2112,45 @@ name = "test-repo"
 
         let upper_result = repo.check_preconditions(&upper_intent);
         assert!(upper_result.is_ok(), "Uppercase hash should match");
+    }
+
+    #[test]
+    fn days_to_ymd_unix_epoch() {
+        let (y, m, d) = super::days_to_ymd(0);
+        assert_eq!((y, m, d), (1970, 1, 1));
+    }
+
+    #[test]
+    fn days_to_ymd_known_date() {
+        // 2026-02-14 is 20498 days since epoch
+        let (y, m, d) = super::days_to_ymd(20498);
+        assert_eq!((y, m, d), (2026, 2, 14));
+    }
+
+    #[test]
+    fn days_to_ymd_leap_year() {
+        // 2000-02-29 is 11016 days since epoch
+        let (y, m, d) = super::days_to_ymd(11016);
+        assert_eq!((y, m, d), (2000, 2, 29));
+    }
+
+    #[test]
+    fn log_entry_has_new_fields() {
+        let entry = LogEntry {
+            change_id: "abcd1234".to_string(),
+            commit_id: "ef567890".to_string(),
+            description: "test entry".to_string(),
+            parent_change_ids: vec![],
+            is_working_copy: false,
+            timestamp: Some("2026-02-14T10:30:00+00:00".to_string()),
+            author: Some("Test User".to_string()),
+            full_commit_id: "ef567890abcdef1234567890abcdef1234567890".to_string(),
+        };
+        assert_eq!(
+            entry.timestamp.as_deref(),
+            Some("2026-02-14T10:30:00+00:00")
+        );
+        assert_eq!(entry.author.as_deref(), Some("Test User"));
+        assert_eq!(entry.full_commit_id.len(), 40);
     }
 }
