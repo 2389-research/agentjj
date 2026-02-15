@@ -1,10 +1,49 @@
 # agentjj
 
-Agent-first version control. A porcelain for [Jujutsu (jj)](https://github.com/martinvonz/jj) designed to make AI agents love source control.
+Agent-first version control for git. Designed to make AI agents love source control.
 
-**Zero-install**: Embeds jj-lib directly—no separate jj installation required.
+## Why We Removed jj from agentjj
 
-**Git-compatible**: Auto-colocates with existing git repos. Git continues to work normally.
+agentjj is a version control tool for AI coding agents. When we started building it, we embedded [Jujutsu](https://github.com/jj-vcs/jj)'s library as the VCS engine. jj's feature list — operation log, no staging area, first-class conflicts — looked like it was made for agents.
+
+It wasn't. Not because jj is bad. Because jj solves human problems, and agents have different problems.
+
+### The Bet
+
+Git is full of footguns for humans. You forget `git add`, your changes don't commit. You hit a merge conflict and freeze. jj fixes all of this. We figured agents, who use version control even more heavily, would benefit even more.
+
+We embedded `jj-lib` directly — one Rust binary, no jj installation, auto-colocates with existing git repos. It compiled. It passed 134 tests. It shipped.
+
+### What Happened
+
+**Commit absorption.** jj's working copy is always a commit. When agentjj "commits," it squashes the working copy into its parent. An agent doing multi-step work — implement feature, write tests, update docs — ended up with one fat squashed commit instead of three. Git history destroyed.
+
+From a field report: *"The jj/agentjj issue was annoying — it absorbed multiple prior commits into a single squashed commit. Told subsequent subagents to use plain git instead."*
+
+**Parallel agent bundling.** jj has one working copy per workspace. Two subagents working simultaneously means one agent's commit grabs both agents' changes. This is jj's design — the working copy model is single-writer. Git doesn't have this problem because `git add` is explicit file selection.
+
+**Colocated mode confusion.** Running jj alongside git means two VCS states to sync. Files tracked by jj appeared "deleted" in git's staging area. Agents that fell back to git saw impossible state.
+
+### The Inversion
+
+| jj removes this | Why humans need the fix | Why agents don't |
+|---|---|---|
+| Staging area | Humans forget `git add` | Agents never forget. Explicit selection is how you commit exactly what you want without grabbing everything. |
+| Conflict handling | Humans panic at conflicts | Agents rarely hit conflicts. When they do, they resolve programmatically. |
+| Operation log | Humans want undo | Reimplementable with git refs. |
+| Change IDs | Humans lose track after rebase | Agents don't rebase. SHAs work fine. |
+
+The staging area one is the sharpest. What jj correctly identifies as friction for humans is the mechanism agents need for selective commits.
+
+### The Codebase Was Already Voting
+
+By v0.3.1, bug fixes had independently migrated three operations from jj to git: diff, orient, and log. Each fix independently concluded git was more reliable. When every bug fix moves code from system A to system B, that's data.
+
+### What Stayed
+
+The valuable parts of agentjj had nothing to do with jj. Code intelligence (tree-sitter). Batch operations. JSON output. Typed commits. The manifest system. All still here. The name stays too — the "jj" is history, not a promise.
+
+---
 
 ## Installation
 
